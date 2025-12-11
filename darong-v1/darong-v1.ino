@@ -235,19 +235,19 @@ void calibrateESC() {
 }
 
 void setupWiFi() {
-    Serial.print("Connecting to WiFi: ");
-    Serial.println(WiFiConfig::SSID);
-    
-    WiFi.begin(WiFiConfig::SSID, WiFiConfig::PASSWORD);
-    
-    while (WiFi.status() != WL_CONNECTED) {
-        delay(100);
-        Serial.print(".");
+    Serial.print("Starting access point: ");
+    Serial.println(WiFiConfig::AP_SSID);
+
+    WiFi.mode(WIFI_AP);
+    bool apStarted = WiFi.softAP(WiFiConfig::AP_SSID, WiFiConfig::AP_PASSWORD);
+    if (!apStarted) {
+        Serial.println("ERROR: Failed to start access point");
+        return;
     }
-    
-    Serial.println("\nWiFi connected");
-    Serial.print("IP address: ");
-    Serial.println(WiFi.localIP());
+
+    Serial.println("Access point started");
+    Serial.print("AP IP address: ");
+    Serial.println(WiFi.softAPIP());
 }
 
 void setupWebServer(){

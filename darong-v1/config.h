@@ -33,14 +33,10 @@ struct CalibrationConfig {
     static constexpr bool ENABLE_DEBUG_PRINT = false;
 };
 
-// WiFi Configuration
+// WiFi Access Point Configuration
 struct WiFiConfig {
-    // static constexpr char* SSID = "Aalok";
-    // static constexpr char* PASSWORD = "FREEHLELO";
-    static constexpr char* SSID = "iQOO Z7 5G";
-    static constexpr char* PASSWORD = "abhishek12";
-    // static constexpr char* SSID = "Infinix HOT 30i";
-    // static constexpr char* PASSWORD = "12345kanak";
+    static constexpr const char* AP_SSID = "Darong-AP";
+    static constexpr const char* AP_PASSWORD = "flysafe123"; // Minimum 8 characters for WPA2
 };
 
 // ESC Configuration

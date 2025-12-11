@@ -9,9 +9,9 @@ This project provides a minimal ESP32-based quadcopter controller with a web UI 
 - Safety additions: command timeout disarms, MPU6050 read failures disarm, and watchdog coverage for PID and web tasks.
 
 ## Running
-1. Configure pins, Wi-Fi credentials, and PID defaults in `config.h`.
+1. Configure pins and PID defaults in `config.h` (the board hosts its own access point by default).
 2. Flash `darong-v1.ino` to an ESP32 board with an attached MPU6050 and four ESCs.
-3. Connect to the configured Wi-Fi network and open the device IP in a browser to use the web UI.
+3. Connect your phone or laptop to the `Darong-AP` Wi-Fi network (password `flysafe123`) and open the printed AP IP address (default `192.168.4.1`) in a browser to use the web UI.
 
 ## Safety notes
 - Motors arm only when throttle exceeds the configured minimum and recent commands are present.
