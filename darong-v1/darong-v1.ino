@@ -3,11 +3,14 @@
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
 #include <ESP32Servo.h>
+#include <cmath>
+#include <EEPROM.h>
 #include <WiFi.h>
 #include <WebServer.h>
 #include <Wire.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <esp_task_wdt.h>
 
 TaskHandle_t webServerTaskHandle_ = NULL;
 TaskHandle_t pidTaskHandle_ = NULL;
@@ -27,6 +30,17 @@ int currentPulseBR_ = ESCConfig::MIN_THROTTLE_PULSE;
 WebServer server_(SystemConfig::WEB_SERVER_PORT);
 
 int baseThrottle = 0;
+bool eepromReady_ = false;
+
+struct CalibrationData {
+    uint32_t magic;
+    float accelX_offset;
+    float accelY_offset;
+    float accelZ_offset;
+    float gyroX_offset;
+    float gyroY_offset;
+    float gyroZ_offset;
+};
 
 // Calibration offsets
 float accelX_offset_ = 0.0f;
@@ -70,6 +84,27 @@ float Kp_yaw_ = PIDConfig::Kp_yaw;
 float Ki_yaw_ = PIDConfig::Ki_yaw;
 float Kd_yaw_ = PIDConfig::Kd_yaw;
 
+bool sensorHealthy_ = true;
+unsigned long lastCommandMicros_ = 0;
+
+void markCommandReceived() {
+    lastCommandMicros_ = micros();
+}
+
+bool hasCommandTimedOut() {
+    return (micros() - lastCommandMicros_) > (SystemConfig::COMMAND_TIMEOUT_MS * 1000UL);
+}
+
+void disarmMotors(const char* reason) {
+    baseThrottle = 0;
+    integralRoll_ = integralPitch_ = integralYaw_ = 0.0f;
+    prevErrorRoll_ = prevErrorPitch_ = prevErrorYaw_ = 0.0f;
+    writeAllMotors(ESCConfig::MIN_THROTTLE_PULSE);
+    if (reason != nullptr) {
+        Serial.println(reason);
+    }
+}
+
 void setup() {
     doSetup();
 }
@@ -81,6 +116,12 @@ void loop() {
 void doSetup(){
     Serial.begin(SystemConfig::SERIAL_BAUD_RATE);
     Serial.println("Initializing Drone...");
+    lastCommandMicros_ = micros();
+
+    int watchdogTimeoutSeconds = max(1, (int)std::ceil(SystemConfig::WATCHDOG_TIMEOUT_MS / 1000.0));
+    if (esp_task_wdt_init(watchdogTimeoutSeconds, true) != ESP_OK) {
+        Serial.println("ERROR: Failed to initialize watchdog timer!");
+    }
 
     // Initialize components
     if (!setupMPU6050()) {
@@ -88,8 +129,15 @@ void doSetup(){
         return;
     }
     
-    if (CalibrationConfig::MPU6050_CALIBRATION) {
+    eepromReady_ = EEPROM.begin(CalibrationConfig::EEPROM_SIZE);
+    if (!eepromReady_) {
+        Serial.println("ERROR: Failed to initialize EEPROM for calibration storage!");
+    }
+
+    bool calibrationLoaded = eepromReady_ && loadCalibrationFromEEPROM();
+    if (!calibrationLoaded) {
         calibrateMPU6050();
+        saveCalibrationToEEPROM();
     }
 
     setupESC();
@@ -124,6 +172,47 @@ bool setupMPU6050(){
     Serial.println("MPU6050 initialized successfully");
 
     return true;
+}
+
+bool loadCalibrationFromEEPROM() {
+    CalibrationData data;
+    EEPROM.get(0, data);
+
+    if (data.magic != CalibrationConfig::EEPROM_MAGIC) {
+        Serial.println("No valid calibration data found in EEPROM. Calibration needed.");
+        return false;
+    }
+
+    accelX_offset_ = data.accelX_offset;
+    accelY_offset_ = data.accelY_offset;
+    accelZ_offset_ = data.accelZ_offset;
+    gyroX_offset_ = data.gyroX_offset;
+    gyroY_offset_ = data.gyroY_offset;
+    gyroZ_offset_ = data.gyroZ_offset;
+
+    Serial.println("Loaded MPU6050 calibration from EEPROM:");
+    printCalibrationData();
+    return true;
+}
+
+void saveCalibrationToEEPROM() {
+    if (!eepromReady_) {
+        Serial.println("EEPROM not initialized; skipping calibration save.");
+        return;
+    }
+
+    CalibrationData data;
+    data.magic = CalibrationConfig::EEPROM_MAGIC;
+    data.accelX_offset = accelX_offset_;
+    data.accelY_offset = accelY_offset_;
+    data.accelZ_offset = accelZ_offset_;
+    data.gyroX_offset = gyroX_offset_;
+    data.gyroY_offset = gyroY_offset_;
+    data.gyroZ_offset = gyroZ_offset_;
+
+    EEPROM.put(0, data);
+    EEPROM.commit();
+    Serial.println("Saved MPU6050 calibration to EEPROM.");
 }
 
 void calibrateMPU6050(){
@@ -206,19 +295,19 @@ void calibrateESC() {
 }
 
 void setupWiFi() {
-    Serial.print("Connecting to WiFi: ");
-    Serial.println(WiFiConfig::SSID);
-    
-    WiFi.begin(WiFiConfig::SSID, WiFiConfig::PASSWORD);
-    
-    while (WiFi.status() != WL_CONNECTED) {
-        delay(100);
-        Serial.print(".");
+    Serial.print("Starting access point: ");
+    Serial.println(WiFiConfig::AP_SSID);
+
+    WiFi.mode(WIFI_AP);
+    bool apStarted = WiFi.softAP(WiFiConfig::AP_SSID, WiFiConfig::AP_PASSWORD);
+    if (!apStarted) {
+        Serial.println("ERROR: Failed to start access point");
+        return;
     }
-    
-    Serial.println("\nWiFi connected");
-    Serial.print("IP address: ");
-    Serial.println(WiFi.localIP());
+
+    Serial.println("Access point started");
+    Serial.print("AP IP address: ");
+    Serial.println(WiFi.softAPIP());
 }
 
 void setupWebServer(){
@@ -230,6 +319,7 @@ void setupWebServer(){
         if (server_.hasArg("value")) {
             int throttle = server_.arg("value").toInt();
             baseThrottle = constrain(throttle, 0, FlightConfig::MAX_THROTTLE_PERCENT);
+            markCommandReceived();
             server_.send(200, "text/plain", "OK");
         } else {
             server_.send(400, "text/plain", "Bad Request");
@@ -240,6 +330,7 @@ void setupWebServer(){
         if (server_.hasArg("value")) {
             float roll = server_.arg("value").toFloat();
             targetRoll_ = constrain(roll, -FlightConfig::MAX_ROLL_ANGLE, FlightConfig::MAX_ROLL_ANGLE);
+            markCommandReceived();
             server_.send(200, "text/plain", "OK");
         } else {
             server_.send(400, "text/plain", "Bad Request");
@@ -250,6 +341,7 @@ void setupWebServer(){
         if (server_.hasArg("value")) {
             float pitch = server_.arg("value").toFloat();
             targetPitch_ = constrain(pitch, -FlightConfig::MAX_PITCH_ANGLE, FlightConfig::MAX_PITCH_ANGLE);
+            markCommandReceived();
             server_.send(200, "text/plain", "OK");
         } else {
             server_.send(400, "text/plain", "Bad Request");
@@ -260,6 +352,7 @@ void setupWebServer(){
         if (server_.hasArg("value")) {
             float yaw = server_.arg("value").toFloat();
             targetYaw_ = constrain(yaw, -FlightConfig::MAX_YAW_RATE, FlightConfig::MAX_YAW_RATE);
+            markCommandReceived();
             server_.send(200, "text/plain", "OK");
         } else {
             server_.send(400, "text/plain", "Bad Request");
@@ -393,8 +486,15 @@ void setupWebServer(){
 }
 
 void webServerTask(void* parameter) {
+    esp_task_wdt_add(NULL);
     while (true) {
+        unsigned long loopStartMs = millis();
         server_.handleClient();
+        uint32_t loopElapsed = millis() - loopStartMs;
+        if (loopElapsed > SystemConfig::WEB_SERVER_TIMEOUT_MS) {
+            Serial.println("Warning: Web server task exceeded execution budget");
+        }
+        esp_task_wdt_reset();
         vTaskDelay(pdMS_TO_TICKS(SystemConfig::WEB_SERVER_UPDATE_INTERVAL_MS));
     }
 }
@@ -434,12 +534,26 @@ bool runPIDTask(){
 }
 void pidControlTask(void* parameter) {
     TickType_t lastWakeTime = xTaskGetTickCount();  // Initialize once
+    esp_task_wdt_add(NULL);
     while (true) {
+        unsigned long loopStartMs = millis();
         unsigned long currentMicros = micros();
         dt_ = (float)(currentMicros - previousMicros_) / 1000000.0;
+        dt_ = max(dt_, PIDConfig::MIN_DT_SECONDS);
         previousMicros_ = currentMicros;
 
-        updateMPU6050();
+        if (baseThrottle > FlightConfig::MIN_THROTTLE_PERCENT && hasCommandTimedOut()) {
+            disarmMotors("Failsafe: Command timeout. Motors disarmed.");
+            vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(SystemConfig::PID_UPDATE_INTERVAL_MS));
+            continue;
+        }
+
+        sensorHealthy_ = updateMPU6050(dt_);
+        if (!sensorHealthy_) {
+            disarmMotors("Failsafe: Sensor read failed. Motors disarmed.");
+            vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(SystemConfig::PID_UPDATE_INTERVAL_MS));
+            continue;
+        }
 
         if (baseThrottle > FlightConfig::MIN_THROTTLE_PERCENT) {
             calculateMotorOutputs();
@@ -457,6 +571,12 @@ void pidControlTask(void* parameter) {
             printDebugInfo();
             lastDebugPrint_ = currentMicros;
         }
+
+        uint32_t loopElapsed = millis() - loopStartMs;
+        if (loopElapsed > SystemConfig::MAX_TASK_EXECUTION_TIME_MS) {
+            Serial.println("Warning: PID task exceeded execution budget");
+        }
+        esp_task_wdt_reset();
 
         vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(SystemConfig::PID_UPDATE_INTERVAL_MS));
     }
@@ -546,9 +666,11 @@ int throttleToPulse(int throttlePercent) {
     return map(throttlePercent, 0, 100, ESCConfig::MIN_THROTTLE_PULSE, ESCConfig::MAX_THROTTLE_PULSE);
 }
 
-void updateMPU6050() {
+bool updateMPU6050(float effectiveDt) {
     sensors_event_t a, g, temp;
-    mpu_.getEvent(&a, &g, &temp);
+    if (!mpu_.getEvent(&a, &g, &temp)) {
+        return false;
+    }
 
     // Apply calibration offsets
     float accelX = a.acceleration.x - accelX_offset_;
@@ -568,11 +690,13 @@ void updateMPU6050() {
     float accelPitch = atan2(-accelX, sqrt(accelY * accelY + accelZ * accelZ)) * 180.0f / PI;
 
     // Complementary filter
-    roll_ = MPUConfig::COMPLEMENTARY_FILTER_ALPHA * (roll_ + gyroX_deg_s_ * dt_) + 
+    roll_ = MPUConfig::COMPLEMENTARY_FILTER_ALPHA * (roll_ + gyroX_deg_s_ * effectiveDt) +
             (1.0f - MPUConfig::COMPLEMENTARY_FILTER_ALPHA) * accelRoll;
-    pitch_ = MPUConfig::COMPLEMENTARY_FILTER_ALPHA * (pitch_ + gyroY_deg_s_ * dt_) + 
+    pitch_ = MPUConfig::COMPLEMENTARY_FILTER_ALPHA * (pitch_ + gyroY_deg_s_ * effectiveDt) +
                 (1.0f - MPUConfig::COMPLEMENTARY_FILTER_ALPHA) * accelPitch;
-    yaw_ += gyroZ_deg_s_ * dt_;
+    yaw_ += gyroZ_deg_s_ * effectiveDt;
+
+    return true;
 
 }
 
