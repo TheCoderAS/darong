@@ -17,11 +17,12 @@ struct SystemConfig {
     static constexpr int WEB_SERVER_TASK_PRIORITY = 2;
     static constexpr int WEB_SERVER_TASK_CORE = 1;  // Run on Core 1
     static constexpr int WEB_SERVER_UPDATE_INTERVAL_MS = 5;  // Faster web server response
-    
+
     // System Stability Configuration
     static constexpr int MAX_TASK_EXECUTION_TIME_MS = 8;  // Max time for PID task
     static constexpr int WEB_SERVER_TIMEOUT_MS = 50;      // Max time for web server cycle
     static constexpr int WATCHDOG_TIMEOUT_MS = 100;       // Watchdog timeout
+    static constexpr int COMMAND_TIMEOUT_MS = 500;        // Failsafe timeout for incoming commands
 };
 
 // Configuration Flags
@@ -30,16 +31,14 @@ struct CalibrationConfig {
     static constexpr bool ESC_CALIBRATION = false;
     static constexpr bool MPU6050_CALIBRATION = true;
     static constexpr bool ENABLE_DEBUG_PRINT = false;
+    static constexpr uint32_t EEPROM_MAGIC = 0x4D505543; // 'MPUC'
+    static constexpr size_t EEPROM_SIZE = 128;
 };
 
-// WiFi Configuration
+// WiFi Access Point Configuration
 struct WiFiConfig {
-    // static constexpr char* SSID = "Aalok";
-    // static constexpr char* PASSWORD = "FREEHLELO";
-    static constexpr char* SSID = "iQOO Z7 5G";
-    static constexpr char* PASSWORD = "abhishek12";
-    // static constexpr char* SSID = "Infinix HOT 30i";
-    // static constexpr char* PASSWORD = "12345kanak";
+    static constexpr const char* AP_SSID = "Darong-AP";
+    static constexpr const char* AP_PASSWORD = "flysafe123"; // Minimum 8 characters for WPA2
 };
 
 // ESC Configuration
@@ -75,6 +74,7 @@ struct PIDConfig {
     static constexpr float MAX_INTEGRAL = 400.0;
     static constexpr float MAX_PID_OUTPUT = 400.0;
     static constexpr float MIN_PID_OUTPUT = -400.0;
+    static constexpr float MIN_DT_SECONDS = 0.001f; // Minimum dt used in PID math
 };
 
 // Flight Configuration
