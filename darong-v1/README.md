@@ -7,6 +7,7 @@ This project provides a minimal ESP32-based quadcopter controller with a web UI 
 - PID-based roll, pitch, and yaw stabilization with live gain tuning endpoints.
 - Simple web dashboard for throttle and attitude commands.
 - Safety additions: command timeout disarms, MPU6050 read failures disarm, and watchdog coverage for PID and web tasks.
+- MPU6050 calibration offsets are persisted to EEPROM so reboots reuse the last valid calibration.
 
 ## Running
 1. Configure pins and PID defaults in `config.h` (the board hosts its own access point by default).

@@ -4,6 +4,7 @@
 #include <Adafruit_Sensor.h>
 #include <ESP32Servo.h>
 #include <cmath>
+#include <EEPROM.h>
 #include <WiFi.h>
 #include <WebServer.h>
 #include <Wire.h>
@@ -29,6 +30,17 @@ int currentPulseBR_ = ESCConfig::MIN_THROTTLE_PULSE;
 WebServer server_(SystemConfig::WEB_SERVER_PORT);
 
 int baseThrottle = 0;
+bool eepromReady_ = false;
+
+struct CalibrationData {
+    uint32_t magic;
+    float accelX_offset;
+    float accelY_offset;
+    float accelZ_offset;
+    float gyroX_offset;
+    float gyroY_offset;
+    float gyroZ_offset;
+};
 
 // Calibration offsets
 float accelX_offset_ = 0.0f;
@@ -117,8 +129,15 @@ void doSetup(){
         return;
     }
     
-    if (CalibrationConfig::MPU6050_CALIBRATION) {
+    eepromReady_ = EEPROM.begin(CalibrationConfig::EEPROM_SIZE);
+    if (!eepromReady_) {
+        Serial.println("ERROR: Failed to initialize EEPROM for calibration storage!");
+    }
+
+    bool calibrationLoaded = eepromReady_ && loadCalibrationFromEEPROM();
+    if (!calibrationLoaded) {
         calibrateMPU6050();
+        saveCalibrationToEEPROM();
     }
 
     setupESC();
@@ -153,6 +172,47 @@ bool setupMPU6050(){
     Serial.println("MPU6050 initialized successfully");
 
     return true;
+}
+
+bool loadCalibrationFromEEPROM() {
+    CalibrationData data;
+    EEPROM.get(0, data);
+
+    if (data.magic != CalibrationConfig::EEPROM_MAGIC) {
+        Serial.println("No valid calibration data found in EEPROM. Calibration needed.");
+        return false;
+    }
+
+    accelX_offset_ = data.accelX_offset;
+    accelY_offset_ = data.accelY_offset;
+    accelZ_offset_ = data.accelZ_offset;
+    gyroX_offset_ = data.gyroX_offset;
+    gyroY_offset_ = data.gyroY_offset;
+    gyroZ_offset_ = data.gyroZ_offset;
+
+    Serial.println("Loaded MPU6050 calibration from EEPROM:");
+    printCalibrationData();
+    return true;
+}
+
+void saveCalibrationToEEPROM() {
+    if (!eepromReady_) {
+        Serial.println("EEPROM not initialized; skipping calibration save.");
+        return;
+    }
+
+    CalibrationData data;
+    data.magic = CalibrationConfig::EEPROM_MAGIC;
+    data.accelX_offset = accelX_offset_;
+    data.accelY_offset = accelY_offset_;
+    data.accelZ_offset = accelZ_offset_;
+    data.gyroX_offset = gyroX_offset_;
+    data.gyroY_offset = gyroY_offset_;
+    data.gyroZ_offset = gyroZ_offset_;
+
+    EEPROM.put(0, data);
+    EEPROM.commit();
+    Serial.println("Saved MPU6050 calibration to EEPROM.");
 }
 
 void calibrateMPU6050(){
