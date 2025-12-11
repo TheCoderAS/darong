@@ -186,6 +186,16 @@ const char ROOT_HTML[] = R"rawliteral(
 <body>
   <h2>ESP32 Quad Motor Control</h2>
   <div class="container">
+    <div class="control-section">
+      <div class="section-title">Safety & Status</div>
+      <button class="speed-btn" id="armButton">Arm</button>
+      <div class="value-display" id="statusText">Waiting for board...</div>
+      <div class="speed-control" style="margin-top:10px;">
+        <button class="speed-btn" id="calibrateMpu">Calibrate MPU</button>
+        <button class="speed-btn" id="calibrateEsc">Calibrate ESC</button>
+      </div>
+    </div>
+
     <!-- Test Toggle Section -->
     <div class="control-section">
       <div class="section-title">Test Mode</div>
@@ -225,9 +235,14 @@ const char ROOT_HTML[] = R"rawliteral(
     const increaseSpeed = document.getElementById("increaseSpeed");
     const decreaseSpeed = document.getElementById("decreaseSpeed");
     const speedValue = document.getElementById("speedValue");
-    
+    const armButton = document.getElementById("armButton");
+    const statusText = document.getElementById("statusText");
+    const calibrateMpu = document.getElementById("calibrateMpu");
+    const calibrateEsc = document.getElementById("calibrateEsc");
+
     let currentSpeed = 0;
     let isTestMode = false;
+    let isArmed = false;
 
     // Update all throttle displays
     function updateThrottleDisplays(value) {
@@ -240,21 +255,27 @@ const char ROOT_HTML[] = R"rawliteral(
     // Update all controls state
     function updateControlsState() {
       const throttleValue = parseInt(masterThrottle.value);
-      
+
+      armButton.innerText = isArmed ? "Disarm" : "Arm";
+
       // Update test mode controls
       // Only disable test mode toggle if manual controls are used (not in test mode)
       const hasManualControl = !isTestMode && (throttleValue > 0 || currentSpeed > 0);
       testToggle.disabled = hasManualControl;
       testSwitch.classList.toggle('disabled', hasManualControl);
-      
+
       // Update speed controls
       // Enable speed controls when not in test mode
       const speedEnabled = !isTestMode;
       increaseSpeed.disabled = !speedEnabled || currentSpeed >= 100;
       decreaseSpeed.disabled = !speedEnabled || currentSpeed <= 0;
-      
+
       // Update throttle control
-      masterThrottle.disabled = isTestMode;
+      masterThrottle.disabled = isTestMode || !isArmed;
+      testToggle.disabled = testToggle.disabled || !isArmed;
+      testSwitch.classList.toggle('disabled', !isArmed || hasManualControl);
+      increaseSpeed.disabled = increaseSpeed.disabled || !isArmed;
+      decreaseSpeed.disabled = decreaseSpeed.disabled || !isArmed;
     }
 
     // Test Toggle Handler
@@ -265,7 +286,7 @@ const char ROOT_HTML[] = R"rawliteral(
       if (isTestMode) {
         currentSpeed = 1;
         updateThrottleDisplays(currentSpeed);
-        fetch("/set?val=" + currentSpeed);
+        if (isArmed) fetch("/set?val=" + currentSpeed);
       } else {
         currentSpeed = 0;
         updateThrottleDisplays(currentSpeed);
@@ -279,7 +300,7 @@ const char ROOT_HTML[] = R"rawliteral(
       if (currentSpeed < 100) {
         currentSpeed++;
         updateThrottleDisplays(currentSpeed);
-        fetch("/set?val=" + currentSpeed);
+        if (isArmed) fetch("/set?val=" + currentSpeed);
         updateControlsState();
       }
     }
@@ -288,7 +309,7 @@ const char ROOT_HTML[] = R"rawliteral(
       if (currentSpeed > 0) {
         currentSpeed--;
         updateThrottleDisplays(currentSpeed);
-        fetch("/set?val=" + currentSpeed);
+        if (isArmed) fetch("/set?val=" + currentSpeed);
         updateControlsState();
       }
     }
@@ -302,9 +323,45 @@ const char ROOT_HTML[] = R"rawliteral(
       updateControlsState();
     }
 
+    // Arm / Disarm handler
+    armButton.onclick = function() {
+      const targetState = isArmed ? "off" : "on";
+      fetch(`/arm?state=${targetState}`)
+        .then(() => refreshStatus());
+    }
+
+    // Calibration handlers
+    calibrateMpu.onclick = function() {
+      statusText.innerText = "Calibrating MPU (keep level)...";
+      fetch('/calibrate/mpu').then(() => refreshStatus());
+    }
+
+    calibrateEsc.onclick = function() {
+      statusText.innerText = "Calibrating ESCs...";
+      fetch('/calibrate/esc').then(() => refreshStatus());
+    }
+
+    function refreshStatus() {
+      fetch('/status')
+        .then(r => r.json())
+        .then(status => {
+          isArmed = status.armed;
+          currentSpeed = status.throttle;
+          updateThrottleDisplays(currentSpeed);
+          const watchdogNote = status.watchdogTriggered ? ' | WATCHDOG TRIPPED' : '';
+          statusText.innerText = `Armed: ${status.armed ? 'Yes' : 'No'} | MPU: ${status.mpuInitialized ? 'Ready' : 'Missing'}${watchdogNote}`;
+          updateControlsState();
+        })
+        .catch(() => {
+          statusText.innerText = 'Unable to read status';
+        });
+    }
+
     // Initial state
     updateThrottleDisplays(0);
     updateControlsState();
+    refreshStatus();
+    setInterval(refreshStatus, 1500);
   </script>
 </body>
 </html>

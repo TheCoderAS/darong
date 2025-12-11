@@ -21,8 +21,18 @@ const int escBLPin = 15;  // Motor BL -> gray
 const int escBRPin = 16;  // Motor BR -> green
 
 bool ESC_CALIBRATION = false;
-bool MPU6050_CALIBRATION = true;
+bool MPU6050_CALIBRATION = false;
 bool mpuInitialized = false;  // Add flag to track MPU initialization
+bool calibrationInProgress = false;
+bool armed = false;
+bool watchdogTriggered = false;
+unsigned long lastCommandMillis = 0;
+unsigned long lastLoopMicros = 0;
+bool attitudeInitialized = false;
+
+const unsigned long COMMAND_TIMEOUT_MS = 1500;
+const float COMPLEMENTARY_ALPHA = 0.98;
+const float RAD_TO_DEG = 180.0 / PI;
 
 // MPU6050 object
 Adafruit_MPU6050 mpu;
@@ -64,9 +74,9 @@ float gyroX_offset = 0;
 float gyroY_offset = 0;
 float gyroZ_offset = 0;
 
-// WiFi credentials - Replace with your network details
-const char* ssid = "Aalok";
-const char* password = "FREEHLELO";
+// WiFi access point credentials
+const char* AP_SSID = "ESP32-Quad-CTRL";
+const char* AP_PASSWORD = "flysafe123";
 WebServer server(80);
 
 int throttle = 0;
@@ -75,15 +85,20 @@ void setup() {
   Serial.begin(115200);  // Initialize serial communication
   Serial.println("Quad Motor Control Program");
 
+  // Reset watchdog
+  lastCommandMillis = millis();
+
   setupAndConnectWifi();
   configureControllerRoutes();
 
   // Always initialize MPU6050
   initializeMPU6050();
 
-  // Calibrate MPU6050 if needed
+  // Calibrate MPU6050 if requested
   if (MPU6050_CALIBRATION && mpuInitialized) {
+    calibrationInProgress = true;
     calibrateMPU6050();
+    calibrationInProgress = false;
   }
 
   // Setup ESCs
@@ -91,7 +106,9 @@ void setup() {
 
   // ESC calibration
   if (ESC_CALIBRATION) {
+    calibrationInProgress = true;
     caliberateESCs();
+    calibrationInProgress = false;
   }
   Serial.println("All ready. \nEntering flight mode in 3 seconds.");
   delay(1000);
@@ -155,31 +172,61 @@ void calculatePID() {
 }
 
 void handleFlight() {
-  int basePulse = throttleToMicroseconds(throttle);
+  int commandThrottle = (armed && !watchdogTriggered && mpuInitialized) ? throttle : 0;
 
   // Only read MPU6050 if it's initialized
   if (mpuInitialized) {
     // Read MPU6050 data
     sensors_event_t a, g, temp;
     mpu.getEvent(&a, &g, &temp);
-
     // Apply calibration offsets
     float accelX = a.acceleration.x - accelX_offset;
     float accelY = a.acceleration.y - accelY_offset;
     float accelZ = a.acceleration.z - accelZ_offset;
 
-    // Calculate current angles (in degrees) using calibrated values
-    currentRoll = atan2(accelY, accelZ) * 180.0 / PI;
-    currentPitch = atan2(-accelX, sqrt(accelY * accelY + accelZ * accelZ)) * 180.0 / PI;
+    float accelRoll = atan2(accelY, accelZ) * RAD_TO_DEG;
+    float accelPitch = atan2(-accelX, sqrt(accelY * accelY + accelZ * accelZ)) * RAD_TO_DEG;
+
+    // Complementary filter blending gyro integration with accelerometer stability
+    unsigned long nowMicros = micros();
+    float dt = (lastLoopMicros == 0) ? 0.0 : (nowMicros - lastLoopMicros) / 1e6;
+    lastLoopMicros = nowMicros;
+
+    float gyroRollRate = (g.gyro.x - gyroX_offset) * RAD_TO_DEG;
+    float gyroPitchRate = (g.gyro.y - gyroY_offset) * RAD_TO_DEG;
+
+    if (!attitudeInitialized) {
+      currentRoll = accelRoll;
+      currentPitch = accelPitch;
+      attitudeInitialized = true;
+    } else if (dt > 0) {
+      float rollPrediction = currentRoll + gyroRollRate * dt;
+      float pitchPrediction = currentPitch + gyroPitchRate * dt;
+
+      currentRoll = COMPLEMENTARY_ALPHA * rollPrediction + (1.0 - COMPLEMENTARY_ALPHA) * accelRoll;
+      currentPitch = COMPLEMENTARY_ALPHA * pitchPrediction + (1.0 - COMPLEMENTARY_ALPHA) * accelPitch;
+    }
   } else {
-    // If MPU is not initialized, keep angles at 0
+    // If MPU is not initialized, keep angles at 0 and disarm
     currentRoll = 0;
     currentPitch = 0;
+    armed = false;
+    throttle = 0;
+    commandThrottle = 0;
   }
+
+  // Watchdog: drop throttle if commands stop coming in
+  if (millis() - lastCommandMillis > COMMAND_TIMEOUT_MS) {
+    watchdogTriggered = true;
+    commandThrottle = 0;
+    throttle = 0;
+  }
+
+  int basePulse = throttleToMicroseconds(commandThrottle);
 
   // Reset PID variables if throttle changes from 0
   static int prevThrottle = 0;
-  if (prevThrottle == 0 && throttle > 0) {
+  if (prevThrottle == 0 && commandThrottle > 0) {
     rollError = 0;
     pitchError = 0;
     rollPrevError = 0;
@@ -189,10 +236,10 @@ void handleFlight() {
     rollDerivative = 0;
     pitchDerivative = 0;
   }
-  prevThrottle = throttle;
+  prevThrottle = commandThrottle;
 
   // Only calculate and apply PID adjustments if throttle is non-zero
-  if (throttle > 0) {
+  if (commandThrottle > 0) {
     calculatePID();
 
     // Apply PID adjustments to each motor
@@ -214,7 +261,7 @@ void handleFlight() {
   Serial.print(" Pitch: ");
   Serial.print(currentPitch);
   Serial.print(" Throttle: ");
-  Serial.print(throttle);
+  Serial.print(commandThrottle);
   Serial.print("% | Adjustments: ");
   Serial.print(motorFLAdjust);
   Serial.print(" ");
@@ -230,5 +277,9 @@ void handleFlight() {
   Serial.print(" ");
   Serial.print(basePulse - motorBLAdjust);
   Serial.print(" ");
-  Serial.println(basePulse - motorBRAdjust);
+  Serial.print(basePulse - motorBRAdjust);
+  Serial.print(" | WD: ");
+  Serial.print(watchdogTriggered ? "1" : "0");
+  Serial.print(" | Armed: ");
+  Serial.println(armed ? "1" : "0");
 }

@@ -16,6 +16,11 @@ void configureControllerRoutes();
 void initializeMPU6050();
 void handleRoot();
 void handleSet();
+void handleArm();
+void handleStatus();
+void handleCalibrateMpu();
+void handleCalibrateEsc();
+void markCommandReceived();
 
 // External variables that need to be declared
 extern Servo escFL;
@@ -27,10 +32,14 @@ extern const int escFRPin;
 extern const int escBLPin;
 extern const int escBRPin;
 extern Adafruit_MPU6050 mpu;
-extern const char* ssid;
-extern const char* password;
+extern const char* AP_SSID;
+extern const char* AP_PASSWORD;
 extern WebServer server;
 extern int throttle;
+extern bool armed;
 extern bool mpuInitialized;
+extern unsigned long lastCommandMillis;
+extern bool watchdogTriggered;
+extern bool calibrationInProgress;
 
 #endif 
