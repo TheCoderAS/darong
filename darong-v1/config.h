@@ -17,11 +17,12 @@ struct SystemConfig {
     static constexpr int WEB_SERVER_TASK_PRIORITY = 2;
     static constexpr int WEB_SERVER_TASK_CORE = 1;  // Run on Core 1
     static constexpr int WEB_SERVER_UPDATE_INTERVAL_MS = 5;  // Faster web server response
-    
+
     // System Stability Configuration
     static constexpr int MAX_TASK_EXECUTION_TIME_MS = 8;  // Max time for PID task
     static constexpr int WEB_SERVER_TIMEOUT_MS = 50;      // Max time for web server cycle
     static constexpr int WATCHDOG_TIMEOUT_MS = 100;       // Watchdog timeout
+    static constexpr int COMMAND_TIMEOUT_MS = 500;        // Failsafe timeout for incoming commands
 };
 
 // Configuration Flags
@@ -75,6 +76,7 @@ struct PIDConfig {
     static constexpr float MAX_INTEGRAL = 400.0;
     static constexpr float MAX_PID_OUTPUT = 400.0;
     static constexpr float MIN_PID_OUTPUT = -400.0;
+    static constexpr float MIN_DT_SECONDS = 0.001f; // Minimum dt used in PID math
 };
 
 // Flight Configuration
