@@ -24,6 +24,44 @@ bool unregisterCurrentTaskFromWatchdog() {
     return true;
 }
 
+bool pauseWatchdogForCalibration() {
+    if (!unregisterCurrentTaskFromWatchdog()) {
+        Serial.println("ERROR: Cannot pause watchdog for calibration.");
+        return false;
+    }
+
+    if (pidTaskHandle_ != NULL) {
+        if (!unregisterPIDTaskFromWatchdog()) {
+            Serial.println("ERROR: Cannot pause PID task watchdog for calibration.");
+            // Attempt to restore web server watchdog before returning
+            registerCurrentTaskWithWatchdog();
+            return false;
+        }
+        vTaskSuspend(pidTaskHandle_);
+    }
+
+    return true;
+}
+
+bool resumeWatchdogAfterCalibration() {
+    bool success = true;
+
+    if (pidTaskHandle_ != NULL) {
+        vTaskResume(pidTaskHandle_);
+        if (!registerPIDTaskWithWatchdog()) {
+            Serial.println("ERROR: Failed to re-register PID task with watchdog after calibration.");
+            success = false;
+        }
+    }
+
+    if (!registerCurrentTaskWithWatchdog()) {
+        Serial.println("ERROR: Failed to re-register web server task with watchdog after calibration.");
+        success = false;
+    }
+
+    return success;
+}
+
 bool registerCurrentTaskWithWatchdog() {
     esp_err_t err = esp_task_wdt_add(NULL);
     if (err != ESP_OK) {
@@ -660,11 +698,9 @@ void setupWebServer(){
     });
 
     server_.on("/calibrateMPU", HTTP_POST, []() {
-        unregisterCurrentTaskFromWatchdog();
-
-        if (pidTaskHandle_ != NULL) {
-            unregisterPIDTaskFromWatchdog();
-            vTaskSuspend(pidTaskHandle_);
+        if (!pauseWatchdogForCalibration()) {
+            server_.send(500, "text/plain", "Failed to pause watchdog for calibration");
+            return;
         }
 
         setFlightState(FlightState::CALIBRATING, "MPU calibration request");
@@ -672,14 +708,14 @@ void setupWebServer(){
         calibrateMPU6050();
         saveCalibrationToEEPROM();
 
-        if (pidTaskHandle_ != NULL) {
-            vTaskResume(pidTaskHandle_);
-            registerPIDTaskWithWatchdog();
-        }
-
-        registerCurrentTaskWithWatchdog();
+        bool watchdogResumed = resumeWatchdogAfterCalibration();
 
         setFlightState(FlightState::DISARMED, "MPU calibration complete");
+
+        if (!watchdogResumed) {
+            server_.send(500, "text/plain", "Calibration complete, but watchdog recovery failed");
+            return;
+        }
 
         server_.send(200, "text/plain", "MPU6050 calibration complete");
     });
@@ -690,23 +726,21 @@ void setupWebServer(){
 
         setFlightState(FlightState::CALIBRATING, "ESC calibration request");
 
-        unregisterCurrentTaskFromWatchdog();
-
-        if (pidTaskHandle_ != NULL) {
-            unregisterPIDTaskFromWatchdog();
-            vTaskSuspend(pidTaskHandle_);
+        if (!pauseWatchdogForCalibration()) {
+            server_.send(500, "text/plain", "Failed to pause watchdog for ESC calibration");
+            return;
         }
 
         calibrateESC();
 
-        if (pidTaskHandle_ != NULL) {
-            vTaskResume(pidTaskHandle_);
-            registerPIDTaskWithWatchdog();
-        }
-
-        registerCurrentTaskWithWatchdog();
+        bool watchdogResumed = resumeWatchdogAfterCalibration();
 
         setFlightState(FlightState::DISARMED, "ESC calibration complete");
+
+        if (!watchdogResumed) {
+            server_.send(500, "text/plain", "ESC calibration complete, but watchdog recovery failed");
+            return;
+        }
 
         server_.send(200, "text/plain", "ESC calibration complete");
     });
