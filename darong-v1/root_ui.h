@@ -574,6 +574,7 @@ const char ROOT_HTML[] = R"rawliteral(
     };
 
     let isLocked = false;
+    let pidLoaded = false;
 
     // Function to update controls state
     function updateControlsState() {
@@ -596,11 +597,11 @@ const char ROOT_HTML[] = R"rawliteral(
         input.style.opacity = disabled ? '0.6' : '1';
       });
 
-      savePIDBtn.disabled = disabled;
-      savePIDBtn.style.opacity = disabled ? '0.5' : '1';
+      savePIDBtn.disabled = disabled || !pidLoaded;
+      savePIDBtn.style.opacity = (disabled || !pidLoaded) ? '0.5' : '1';
 
-      resetPIDBtn.disabled = disabled;
-      resetPIDBtn.style.opacity = disabled ? '0.5' : '1';
+      resetPIDBtn.disabled = disabled || !pidLoaded;
+      resetPIDBtn.style.opacity = (disabled || !pidLoaded) ? '0.5' : '1';
 
       resetFlightBtn.disabled = disabled;
       resetFlightBtn.style.opacity = disabled ? '0.5' : '1';
@@ -781,17 +782,23 @@ const char ROOT_HTML[] = R"rawliteral(
     }
 
     function fetchCurrentPid() {
+      pidLoaded = false;
+      updateControlsState();
       showPidStatus('Loading current PID values...');
       fetch('/getPID')
         .then(res => res.ok ? res.json() : Promise.reject(new Error('Unable to read PID values')))
         .then(data => {
           loadedPidValues = { ...data };
           setPidFormValues(loadedPidValues);
+          pidLoaded = true;
+          updateControlsState();
           showPidStatus('PID values loaded.');
         })
         .catch(() => {
           loadedPidValues = { ...zeroPidValues };
           setPidFormValues(loadedPidValues);
+          pidLoaded = true;
+          updateControlsState();
           showPidStatus('PID values unavailable; using zeros.', true);
         });
     }
@@ -818,7 +825,7 @@ const char ROOT_HTML[] = R"rawliteral(
     }
 
     savePIDBtn.onclick = function () {
-      if (isLocked) return;
+      if (isLocked || !pidLoaded) return;
       const values = collectPidValues();
       if (values) {
         sendPidUpdate(values);
@@ -826,7 +833,7 @@ const char ROOT_HTML[] = R"rawliteral(
     };
 
     resetPIDBtn.onclick = function () {
-      if (isLocked) return;
+      if (isLocked || !pidLoaded) return;
       setPidFormValues(loadedPidValues);
       sendPidUpdate(loadedPidValues);
     };

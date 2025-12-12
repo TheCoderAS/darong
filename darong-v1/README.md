@@ -15,7 +15,7 @@ This project provides a minimal ESP32-based quadcopter controller with a web UI 
 3. Connect your phone or laptop to the `Darong-AP` Wi-Fi network (password `flysafe123`) and open the printed AP IP address (default `192.168.4.1`) in a browser to use the web UI.
 
 ### Web UI PID tuning
-- The PID card shows Kp/Ki/Kd inputs for roll, pitch, and yaw. Enter the desired values and click **Save PID** to send them in a single request to the controller (`/setPID`).
+- The PID card shows Kp/Ki/Kd inputs for roll, pitch, and yaw. Enter the desired values and click **Save PID** to send them in a single request to the controller (`/setPID`). The Save and Reset buttons stay disabled until the initial load finishes.
 - The controller exposes `/getPID` for the UI to preload the latest in-memory gains; **Reset PID** restores the most recently loaded gains (zeros if the controller could not be reached during load) and posts them back to the controller.
 
 ## Safety notes
