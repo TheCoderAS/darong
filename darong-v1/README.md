@@ -10,13 +10,13 @@ This project provides a minimal ESP32-based quadcopter controller with a web UI 
 - MPU6050 calibration offsets are persisted to EEPROM so reboots reuse the last valid calibration.
 
 ## Running
-1. Configure pins and PID defaults in `config.h` (the board hosts its own access point by default).
+1. Configure pins and PID defaults in `config.h` (the board hosts its own access point by default). The UI loads PID gains from the controller; if the `/getPID` endpoint is unreachable it will fall back to zeros.
 2. Flash `darong-v1.ino` to an ESP32 board with an attached MPU6050 and four ESCs.
 3. Connect your phone or laptop to the `Darong-AP` Wi-Fi network (password `flysafe123`) and open the printed AP IP address (default `192.168.4.1`) in a browser to use the web UI.
 
 ### Web UI PID tuning
 - The PID card shows Kp/Ki/Kd inputs for roll, pitch, and yaw. Enter the desired values and click **Save PID** to send them in a single request to the controller (`/setPID`).
-- The controller exposes `/getPID` for the UI to preload the latest in-memory gains; **Reset PID** fills the defaults shown in `config.h` and posts them back to the controller.
+- The controller exposes `/getPID` for the UI to preload the latest in-memory gains; **Reset PID** restores the most recently loaded gains (zeros if the controller could not be reached during load) and posts them back to the controller.
 
 ## Safety notes
 - Motors arm only when throttle exceeds the configured minimum and recent commands are present.

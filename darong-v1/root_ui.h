@@ -740,17 +740,19 @@ const char ROOT_HTML[] = R"rawliteral(
       });
     });
 
-    const defaultsPIDValues = {
-      kpRoll: 2.6,
-      kiRoll: 2.0,
-      kdRoll: 0.115,
-      kpPitch: 2.6,
-      kiPitch: 1.950,
-      kdPitch: 0.115,
-      kpYaw: 0.0,
-      kiYaw: 0.0,
-      kdYaw: 0.0
+    const zeroPidValues = {
+      kpRoll: 0,
+      kiRoll: 0,
+      kdRoll: 0,
+      kpPitch: 0,
+      kiPitch: 0,
+      kdPitch: 0,
+      kpYaw: 0,
+      kiYaw: 0,
+      kdYaw: 0
     };
+
+    let loadedPidValues = { ...zeroPidValues };
 
     function showPidStatus(message, isError = false) {
       pidStatus.textContent = message;
@@ -781,14 +783,16 @@ const char ROOT_HTML[] = R"rawliteral(
     function fetchCurrentPid() {
       showPidStatus('Loading current PID values...');
       fetch('/getPID')
-        .then(res => res.ok ? res.json() : Promise.reject(new Error('Unable to read PID values'))) 
+        .then(res => res.ok ? res.json() : Promise.reject(new Error('Unable to read PID values')))
         .then(data => {
-          setPidFormValues(data);
+          loadedPidValues = { ...data };
+          setPidFormValues(loadedPidValues);
           showPidStatus('PID values loaded.');
         })
         .catch(() => {
-          setPidFormValues(defaultsPIDValues);
-          showPidStatus('Using default PID values.', true);
+          loadedPidValues = { ...zeroPidValues };
+          setPidFormValues(loadedPidValues);
+          showPidStatus('PID values unavailable; using zeros.', true);
         });
     }
 
@@ -823,8 +827,8 @@ const char ROOT_HTML[] = R"rawliteral(
 
     resetPIDBtn.onclick = function () {
       if (isLocked) return;
-      setPidFormValues(defaultsPIDValues);
-      sendPidUpdate(defaultsPIDValues);
+      setPidFormValues(loadedPidValues);
+      sendPidUpdate(loadedPidValues);
     };
 
     resetFlightBtn.onclick = function () {
@@ -863,7 +867,7 @@ const char ROOT_HTML[] = R"rawliteral(
 
 
     // Initial state
-    setPidFormValues(defaultsPIDValues);
+    setPidFormValues(loadedPidValues);
     fetchCurrentPid();
     updateControlsState();
   </script>
