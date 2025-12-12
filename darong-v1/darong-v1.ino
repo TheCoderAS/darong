@@ -544,6 +544,13 @@ void setupWebServer(){
         }
     });
 
+    server_.on("/getStatus", HTTP_GET, []() {
+        char response[128];
+        snprintf(response, sizeof(response), "{\"state\":\"%s\",\"throttle\":%d}",
+                 flightStateToString(flightState_), baseThrottle);
+        server_.send(200, "application/json", response);
+    });
+
     server_.on("/arm", HTTP_POST, []() {
         markCommandReceived();
         requestArm("Web arm command");

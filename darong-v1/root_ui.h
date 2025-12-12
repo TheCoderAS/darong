@@ -164,6 +164,59 @@ const char ROOT_HTML[] = R"rawliteral(
       transform: none;
     }
 
+    .state-display {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      padding: 10px;
+      background: rgba(0, 0, 0, 0.4);
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+    }
+
+    .state-chip {
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-weight: 600;
+      background: linear-gradient(135deg, #2c2c2c, #1a1a1a);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+    }
+
+    .flight-actions {
+      display: flex;
+      gap: 10px;
+    }
+
+    .flight-action-btn {
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      background: rgba(255, 255, 255, 0.08);
+      color: #ffffff;
+      cursor: pointer;
+      transition: background 0.2s ease, transform 0.2s ease;
+      font-weight: 600;
+    }
+
+    .flight-action-btn:hover:not(:disabled) {
+      background: rgba(255, 255, 255, 0.16);
+      transform: translateY(-1px);
+    }
+
+    .flight-action-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .status-note {
+      font-size: 0.9em;
+      color: #cccccc;
+      text-align: center;
+    }
+
     /* PID Control Styles */
     .pid-form {
       display: grid;
@@ -437,6 +490,19 @@ const char ROOT_HTML[] = R"rawliteral(
   <div class="container">
     <!-- Throttle Control -->
     <div class="control-section">
+      <div class="section-title">Flight State</div>
+      <div class="state-display">
+        <div class="state-chip" id="flightState">INIT</div>
+        <div class="flight-actions">
+          <button class="flight-action-btn" id="armButton">Arm</button>
+          <button class="flight-action-btn" id="disarmButton">Disarm</button>
+          <button class="flight-action-btn" id="landButton">Land</button>
+        </div>
+        <div class="status-note" id="flightStatusNote">Request arming to enable controls.</div>
+      </div>
+    </div>
+
+    <div class="control-section">
       <div class="section-title">Throttle</div>
       <div class="throttle-control">
         <input type="range" min="0" max="100" value="0" id="masterThrottle">
@@ -572,6 +638,11 @@ const char ROOT_HTML[] = R"rawliteral(
     const lockValue = document.getElementById("lockValue");
     const decreaseThrottleBtn = document.getElementById("decreaseThrottle");
     const increaseThrottleBtn = document.getElementById("increaseThrottle");
+    const flightStateDisplay = document.getElementById("flightState");
+    const flightStatusNote = document.getElementById("flightStatusNote");
+    const armButton = document.getElementById("armButton");
+    const disarmButton = document.getElementById("disarmButton");
+    const landButton = document.getElementById("landButton");
     const pidInputs = {
       kpRoll: document.getElementById("kpRoll"),
       kiRoll: document.getElementById("kiRoll"),
@@ -602,10 +673,13 @@ const char ROOT_HTML[] = R"rawliteral(
 
     let isLocked = false;
     let pidLoaded = false;
+    let flightState = 'INIT';
+
+    const isControlsDisabled = () => isLocked || !(flightState === 'ARMED' || flightState === 'LANDING');
 
     // Function to update controls state
     function updateControlsState() {
-      const disabled = isLocked;
+      const disabled = isControlsDisabled();
 
       // Update throttle control
       masterThrottle.disabled = disabled;
@@ -636,11 +710,15 @@ const char ROOT_HTML[] = R"rawliteral(
       calibrateMPUButton.disabled = disabled;
       calibrateESCButton.disabled = disabled;
 
+      armButton.disabled = isLocked || flightState === 'ARMED' || flightState === 'LANDING';
+      disarmButton.disabled = isLocked || flightState === 'DISARMED';
+      landButton.disabled = isLocked || flightState === 'LANDING' || flightState === 'DISARMED' || flightState === 'CALIBRATING';
+
     }
 
     // Function to update throttle value
     function updateThrottle(value) {
-      if (isLocked) return;
+      if (isControlsDisabled()) return;
       masterThrottle.value = value;
       throttleValue.innerText = value;
       fetch("/setThrottle?value=" + value);
@@ -648,13 +726,13 @@ const char ROOT_HTML[] = R"rawliteral(
 
     // Throttle Control
     masterThrottle.oninput = function () {
-      if (isLocked) return;
+      if (isControlsDisabled()) return;
       updateThrottle(this.value);
     }
 
     // Throttle Buttons
     decreaseThrottleBtn.onclick = function () {
-      if (isLocked) return;
+      if (isControlsDisabled()) return;
       const currentValue = parseInt(masterThrottle.value);
       if (currentValue > 0) {
         updateThrottle(currentValue - 1);
@@ -662,7 +740,7 @@ const char ROOT_HTML[] = R"rawliteral(
     }
 
     increaseThrottleBtn.onclick = function () {
-      if (isLocked) return;
+      if (isControlsDisabled()) return;
       const currentValue = parseInt(masterThrottle.value);
       if (currentValue < 100) {
         updateThrottle(currentValue + 1);
@@ -676,6 +754,70 @@ const char ROOT_HTML[] = R"rawliteral(
       updateControlsState();
     }
 
+    function setFlightState(newState) {
+      flightState = newState;
+      flightStateDisplay.innerText = newState;
+      switch (newState) {
+        case 'ARMED':
+          flightStatusNote.innerText = 'Controls enabled. Fly safe!';
+          break;
+        case 'LANDING':
+          flightStatusNote.innerText = 'Landing sequence in progress.';
+          break;
+        case 'DISARMED':
+          flightStatusNote.innerText = 'Request arming to enable controls.';
+          break;
+        case 'CALIBRATING':
+          flightStatusNote.innerText = 'Calibration in progress...';
+          break;
+        case 'FAILSAFE':
+          flightStatusNote.innerText = 'Failsafe active. Disarm before rearming.';
+          break;
+        default:
+          flightStatusNote.innerText = 'Idle.';
+      }
+      updateControlsState();
+    }
+
+    function refreshStatus() {
+      fetch('/getStatus')
+        .then(res => res.ok ? res.json() : Promise.reject())
+        .then(data => {
+          setFlightState(data.state);
+          throttleValue.innerText = data.throttle;
+          masterThrottle.value = data.throttle;
+        })
+        .catch(() => {
+          flightStatusNote.innerText = 'Unable to read flight status.';
+        });
+    }
+
+    function postCommand(url, successMessage) {
+      if (isLocked) return;
+      flightStatusNote.innerText = 'Request sent...';
+      fetch(url, { method: 'POST' })
+        .then(res => res.ok ? res.text() : Promise.reject(res.text()))
+        .then(msg => {
+          flightStatusNote.innerText = msg || successMessage;
+          refreshStatus();
+        })
+        .catch(() => {
+          flightStatusNote.innerText = 'Command failed.';
+        });
+    }
+
+    armButton.onclick = function () {
+      postCommand('/arm', 'Arming...');
+    };
+
+    disarmButton.onclick = function () {
+      postCommand('/disarm', 'Disarmed.');
+    };
+
+    landButton.onclick = function () {
+      postCommand('/land', 'Landing initiated.');
+    };
+
     // Stick Control Implementation
     Object.entries(sticks).forEach(([key, stick]) => {
       let isDragging = false;
@@ -683,7 +825,7 @@ const char ROOT_HTML[] = R"rawliteral(
       let currentX = 0, currentY = 0;
 
       const updateStickPosition = (x, y) => {
-        if (isLocked) return;
+        if (isControlsDisabled()) return;
 
         const rect = stick.element.getBoundingClientRect();
         const centerX = rect.width / 2;
@@ -714,7 +856,7 @@ const char ROOT_HTML[] = R"rawliteral(
       };
 
       stick.handle.addEventListener('mousedown', (e) => {
-        if (isLocked) return;
+        if (isControlsDisabled()) return;
         isDragging = true;
         const rect = stick.element.getBoundingClientRect();
         startX = e.clientX - rect.left - rect.width / 2;
@@ -725,7 +867,7 @@ const char ROOT_HTML[] = R"rawliteral(
       });
 
       document.addEventListener('mousemove', (e) => {
-        if (!isDragging || isLocked) return;
+        if (!isDragging || isControlsDisabled()) return;
         const rect = stick.element.getBoundingClientRect();
         currentX = e.clientX - rect.left - rect.width / 2;
         currentY = e.clientY - rect.top - rect.height / 2;
@@ -733,7 +875,7 @@ const char ROOT_HTML[] = R"rawliteral(
       });
 
       document.addEventListener('mouseup', () => {
-        if (!isDragging || isLocked) return;
+        if (!isDragging || isControlsDisabled()) return;
         isDragging = false;
         currentX = 0;
         currentY = 0;
@@ -742,7 +884,7 @@ const char ROOT_HTML[] = R"rawliteral(
 
       // Touch events for mobile
       stick.handle.addEventListener('touchstart', (e) => {
-        if (isLocked) return;
+        if (isControlsDisabled()) return;
         e.preventDefault();
         isDragging = true;
         const rect = stick.element.getBoundingClientRect();
@@ -754,7 +896,7 @@ const char ROOT_HTML[] = R"rawliteral(
       });
 
       document.addEventListener('touchmove', (e) => {
-        if (!isDragging || isLocked) return;
+        if (!isDragging || isControlsDisabled()) return;
         e.preventDefault();
         const rect = stick.element.getBoundingClientRect();
         currentX = e.touches[0].clientX - rect.left - rect.width / 2;
@@ -932,6 +1074,8 @@ const char ROOT_HTML[] = R"rawliteral(
     // Initial state
     setPidFormValues(loadedPidValues);
     fetchCurrentPid();
+    refreshStatus();
+    setInterval(refreshStatus, 1000);
     updateControlsState();
   </script>
 </body>
