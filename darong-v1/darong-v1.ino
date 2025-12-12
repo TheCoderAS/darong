@@ -15,6 +15,18 @@
 TaskHandle_t webServerTaskHandle_ = NULL;
 TaskHandle_t pidTaskHandle_ = NULL;
 
+void unregisterPIDTaskFromWatchdog() {
+    if (pidTaskHandle_ != NULL) {
+        esp_task_wdt_delete(pidTaskHandle_);
+    }
+}
+
+void registerPIDTaskWithWatchdog() {
+    if (pidTaskHandle_ != NULL) {
+        esp_task_wdt_add(pidTaskHandle_);
+    }
+}
+
 Adafruit_MPU6050 mpu_;
 
 Servo escFL_F_;
@@ -617,6 +629,7 @@ void setupWebServer(){
 
     server_.on("/calibrateMPU", HTTP_POST, []() {
         if (pidTaskHandle_ != NULL) {
+            unregisterPIDTaskFromWatchdog();
             vTaskSuspend(pidTaskHandle_);
         }
 
@@ -627,6 +640,7 @@ void setupWebServer(){
 
         if (pidTaskHandle_ != NULL) {
             vTaskResume(pidTaskHandle_);
+            registerPIDTaskWithWatchdog();
         }
 
         setFlightState(FlightState::DISARMED, "MPU calibration complete");
@@ -641,6 +655,7 @@ void setupWebServer(){
         setFlightState(FlightState::CALIBRATING, "ESC calibration request");
 
         if (pidTaskHandle_ != NULL) {
+            unregisterPIDTaskFromWatchdog();
             vTaskSuspend(pidTaskHandle_);
         }
 
@@ -648,6 +663,7 @@ void setupWebServer(){
 
         if (pidTaskHandle_ != NULL) {
             vTaskResume(pidTaskHandle_);
+            registerPIDTaskWithWatchdog();
         }
 
         setFlightState(FlightState::DISARMED, "ESC calibration complete");
