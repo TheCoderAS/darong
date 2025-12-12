@@ -15,6 +15,14 @@
 TaskHandle_t webServerTaskHandle_ = NULL;
 TaskHandle_t pidTaskHandle_ = NULL;
 
+bool unregisterCurrentTaskFromWatchdog() {
+    return esp_task_wdt_delete(NULL) == ESP_OK;
+}
+
+void registerCurrentTaskWithWatchdog() {
+    esp_task_wdt_add(NULL);
+}
+
 void unregisterPIDTaskFromWatchdog() {
     if (pidTaskHandle_ != NULL) {
         esp_task_wdt_delete(pidTaskHandle_);
@@ -628,6 +636,8 @@ void setupWebServer(){
     });
 
     server_.on("/calibrateMPU", HTTP_POST, []() {
+        unregisterCurrentTaskFromWatchdog();
+
         if (pidTaskHandle_ != NULL) {
             unregisterPIDTaskFromWatchdog();
             vTaskSuspend(pidTaskHandle_);
@@ -643,6 +653,8 @@ void setupWebServer(){
             registerPIDTaskWithWatchdog();
         }
 
+        registerCurrentTaskWithWatchdog();
+
         setFlightState(FlightState::DISARMED, "MPU calibration complete");
 
         server_.send(200, "text/plain", "MPU6050 calibration complete");
@@ -653,6 +665,8 @@ void setupWebServer(){
         disarmMotors(NULL);
 
         setFlightState(FlightState::CALIBRATING, "ESC calibration request");
+
+        unregisterCurrentTaskFromWatchdog();
 
         if (pidTaskHandle_ != NULL) {
             unregisterPIDTaskFromWatchdog();
@@ -665,6 +679,8 @@ void setupWebServer(){
             vTaskResume(pidTaskHandle_);
             registerPIDTaskWithWatchdog();
         }
+
+        registerCurrentTaskWithWatchdog();
 
         setFlightState(FlightState::DISARMED, "ESC calibration complete");
 
