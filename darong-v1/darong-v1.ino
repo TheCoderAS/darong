@@ -26,11 +26,23 @@ int currentPulseFL_ = ESCConfig::MIN_THROTTLE_PULSE;
 int currentPulseFR_ = ESCConfig::MIN_THROTTLE_PULSE;
 int currentPulseBL_ = ESCConfig::MIN_THROTTLE_PULSE;
 int currentPulseBR_ = ESCConfig::MIN_THROTTLE_PULSE;
+bool escInitialized_ = false;
 
 WebServer server_(SystemConfig::WEB_SERVER_PORT);
 
 int baseThrottle = 0;
 bool eepromReady_ = false;
+
+enum class FlightState {
+    INIT,
+    CALIBRATING,
+    DISARMED,
+    ARMED,
+    FAILSAFE,
+    LANDING
+};
+
+FlightState flightState_ = FlightState::INIT;
 
 struct CalibrationData {
     uint32_t magic;
@@ -108,14 +120,117 @@ bool hasCommandTimedOut() {
     return (micros() - lastCommandMicros_) > (SystemConfig::COMMAND_TIMEOUT_MS * 1000UL);
 }
 
-void disarmMotors(const char* reason) {
-    baseThrottle = 0;
-    integralRoll_ = integralPitch_ = integralYaw_ = 0.0f;
-    prevErrorRoll_ = prevErrorPitch_ = prevErrorYaw_ = 0.0f;
-    writeAllMotors(ESCConfig::MIN_THROTTLE_PULSE);
-    if (reason != nullptr) {
-        Serial.println(reason);
+const char* flightStateToString(FlightState state) {
+    switch (state) {
+        case FlightState::INIT: return "INIT";
+        case FlightState::CALIBRATING: return "CALIBRATING";
+        case FlightState::DISARMED: return "DISARMED";
+        case FlightState::ARMED: return "ARMED";
+        case FlightState::FAILSAFE: return "FAILSAFE";
+        case FlightState::LANDING: return "LANDING";
+        default: return "UNKNOWN";
     }
+}
+
+void resetIntegrators() {
+    integralRoll_ = 0.0f;
+    prevErrorRoll_ = 0.0f;
+    integralPitch_ = 0.0f;
+    prevErrorPitch_ = 0.0f;
+    integralYaw_ = 0.0f;
+    prevErrorYaw_ = 0.0f;
+}
+
+void applyMotorOutputsForState() {
+    switch (flightState_) {
+        case FlightState::INIT:
+        case FlightState::CALIBRATING:
+        case FlightState::DISARMED:
+            baseThrottle = 0;
+            if (escInitialized_) {
+                writeAllMotors(ESCConfig::MIN_THROTTLE_PULSE);
+            }
+            break;
+        case FlightState::FAILSAFE:
+            baseThrottle = 0;
+            if (escInitialized_) {
+                writeAllMotors(ESCConfig::MIN_THROTTLE_PULSE);
+            }
+            Serial.println("Failsafe: Motors set to minimum pulse.");
+            break;
+        case FlightState::LANDING:
+            baseThrottle = (int)FlightConfig::MIN_THROTTLE_PERCENT;
+            break;
+        case FlightState::ARMED:
+            break;
+    }
+}
+
+void setFlightState(FlightState newState, const char* reason) {
+    if (flightState_ == newState) {
+        return;
+    }
+
+    FlightState previousState = flightState_;
+    if (previousState == FlightState::ARMED && newState != FlightState::ARMED) {
+        resetIntegrators();
+    }
+
+    flightState_ = newState;
+    Serial.print("Flight state changed: ");
+    Serial.print(flightStateToString(previousState));
+    Serial.print(" -> ");
+    Serial.print(flightStateToString(newState));
+    if (reason != nullptr) {
+        Serial.print(" | Reason: ");
+        Serial.print(reason);
+    }
+    Serial.println();
+
+    applyMotorOutputsForState();
+}
+
+void triggerFailsafe(const char* reason) {
+    setFlightState(FlightState::FAILSAFE, reason);
+}
+
+bool isSafeToArm() {
+    bool neutralAttitude = abs(roll_) <= FlightConfig::ARMING_ATTITUDE_LIMIT_DEG &&
+                           abs(pitch_) <= FlightConfig::ARMING_ATTITUDE_LIMIT_DEG;
+    bool lowThrottle = baseThrottle <= FlightConfig::ARMING_MAX_THROTTLE_PERCENT;
+    return sensorHealthy_ && neutralAttitude && lowThrottle;
+}
+
+void requestArm(const char* reason) {
+    if (flightState_ != FlightState::DISARMED) {
+        Serial.println("Arm request ignored: Flight controller not in DISARMED state.");
+        return;
+    }
+
+    if (!isSafeToArm()) {
+        Serial.println("Arm request denied: Preconditions failed (sensor health, attitude, throttle).");
+        return;
+    }
+
+    setFlightState(FlightState::ARMED, reason);
+}
+
+void requestDisarm(const char* reason) {
+    setFlightState(FlightState::DISARMED, reason);
+}
+
+void requestLanding(const char* reason) {
+    if (flightState_ == FlightState::ARMED) {
+        setFlightState(FlightState::LANDING, reason);
+    } else if (flightState_ == FlightState::LANDING) {
+        Serial.println("Landing already in progress.");
+    } else {
+        Serial.println("Landing request ignored: Not currently armed.");
+    }
+}
+
+void disarmMotors(const char* reason) {
+    requestDisarm(reason);
 }
 
 void setup() {
@@ -130,6 +245,8 @@ void doSetup(){
     Serial.begin(SystemConfig::SERIAL_BAUD_RATE);
     Serial.println("Initializing Drone...");
     lastCommandMicros_ = micros();
+
+    setFlightState(FlightState::CALIBRATING, "Boot");
 
     int watchdogTimeoutSeconds = max(1, (int)std::ceil(SystemConfig::WATCHDOG_TIMEOUT_MS / 1000.0));
     if (esp_task_wdt_init(watchdogTimeoutSeconds, true) != ESP_OK) {
@@ -163,6 +280,8 @@ void doSetup(){
         calibrateESC();
     }
     writeAllMotors(ESCConfig::MIN_THROTTLE_PULSE);
+
+    setFlightState(FlightState::DISARMED, "Calibration complete");
 
     setupWiFi();
     setupWebServer();
@@ -339,6 +458,8 @@ void setupESC(){
     escBR_B_.attach(ESCConfig::BR_PIN, ESCConfig::MIN_THROTTLE_PULSE, ESCConfig::MAX_THROTTLE_PULSE);
     escBR_B_.setPeriodHertz(ESCConfig::ESC_FREQ);
 
+    escInitialized_ = true;
+
     Serial.println("ESC initialized successfully");
 }
 
@@ -423,6 +544,39 @@ void setupWebServer(){
         }
     });
 
+    server_.on("/getStatus", HTTP_GET, []() {
+        char response[128];
+        snprintf(response, sizeof(response), "{\"state\":\"%s\",\"throttle\":%d}",
+                 flightStateToString(flightState_), baseThrottle);
+        server_.send(200, "application/json", response);
+    });
+
+    server_.on("/arm", HTTP_POST, []() {
+        markCommandReceived();
+        requestArm("Web arm command");
+        if (flightState_ == FlightState::ARMED) {
+            server_.send(200, "text/plain", "Armed");
+        } else {
+            server_.send(409, "text/plain", "Arm request failed");
+        }
+    });
+
+    server_.on("/disarm", HTTP_POST, []() {
+        markCommandReceived();
+        requestDisarm("Web disarm command");
+        server_.send(200, "text/plain", "Disarmed");
+    });
+
+    server_.on("/land", HTTP_POST, []() {
+        markCommandReceived();
+        requestLanding("Web land command");
+        if (flightState_ == FlightState::LANDING) {
+            server_.send(200, "text/plain", "Landing initiated");
+        } else {
+            server_.send(409, "text/plain", "Landing not initiated");
+        }
+    });
+
     server_.on("/getPID", HTTP_GET, []() {
         char response[256];
         snprintf(response, sizeof(response),
@@ -466,6 +620,8 @@ void setupWebServer(){
             vTaskSuspend(pidTaskHandle_);
         }
 
+        setFlightState(FlightState::CALIBRATING, "MPU calibration request");
+
         calibrateMPU6050();
         saveCalibrationToEEPROM();
 
@@ -473,12 +629,16 @@ void setupWebServer(){
             vTaskResume(pidTaskHandle_);
         }
 
+        setFlightState(FlightState::DISARMED, "MPU calibration complete");
+
         server_.send(200, "text/plain", "MPU6050 calibration complete");
     });
 
     server_.on("/calibrateESC", HTTP_POST, []() {
         baseThrottle = 0;
         disarmMotors(NULL);
+
+        setFlightState(FlightState::CALIBRATING, "ESC calibration request");
 
         if (pidTaskHandle_ != NULL) {
             vTaskSuspend(pidTaskHandle_);
@@ -490,16 +650,14 @@ void setupWebServer(){
             vTaskResume(pidTaskHandle_);
         }
 
+        setFlightState(FlightState::DISARMED, "ESC calibration complete");
+
         server_.send(200, "text/plain", "ESC calibration complete");
     });
 
     server_.on("/resetFlight", HTTP_GET, []() {
-        integralRoll_ = 0.0f;
-        prevErrorRoll_ = 0.0f;
-        integralPitch_ = 0.0f;
-        prevErrorPitch_ = 0.0f;
-        integralYaw_ = 0.0f;
-        prevErrorYaw_ = 0.0f;
+        resetIntegrators();
+        requestDisarm("Flight reset");
 
         server_.send(200, "text/plain", "OK");
     });
@@ -536,6 +694,7 @@ void webServerTask(void* parameter) {
         uint32_t loopElapsed = millis() - loopStartMs;
         if (loopElapsed > SystemConfig::WEB_SERVER_TIMEOUT_MS) {
             Serial.println("Warning: Web server task exceeded execution budget");
+            triggerFailsafe("Failsafe: Web server task exceeded execution budget");
         }
         esp_task_wdt_reset();
         vTaskDelay(pdMS_TO_TICKS(SystemConfig::WEB_SERVER_UPDATE_INTERVAL_MS));
@@ -585,29 +744,36 @@ void pidControlTask(void* parameter) {
         dt_ = max(dt_, PIDConfig::MIN_DT_SECONDS);
         previousMicros_ = currentMicros;
 
-        if (baseThrottle > FlightConfig::MIN_THROTTLE_PERCENT && hasCommandTimedOut()) {
-            disarmMotors("Failsafe: Command timeout. Motors disarmed.");
+        if ((flightState_ == FlightState::ARMED || flightState_ == FlightState::LANDING) && hasCommandTimedOut()) {
+            triggerFailsafe("Failsafe: Command timeout.");
             vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(SystemConfig::PID_UPDATE_INTERVAL_MS));
             continue;
         }
 
         sensorHealthy_ = updateMPU6050(dt_);
         if (!sensorHealthy_) {
-            disarmMotors("Failsafe: Sensor read failed. Motors disarmed.");
+            triggerFailsafe("Failsafe: Sensor read failed.");
             vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(SystemConfig::PID_UPDATE_INTERVAL_MS));
             continue;
         }
 
-        if (baseThrottle > FlightConfig::MIN_THROTTLE_PERCENT) {
-            calculateMotorOutputs();
-        } else {
-            integralRoll_ = 0.0f;
-            prevErrorRoll_ = 0.0f;
-            integralPitch_ = 0.0f;
-            prevErrorPitch_ = 0.0f;
-            integralYaw_ = 0.0f;
-            prevErrorYaw_ = 0.0f;
-            writeAllMotors(ESCConfig::MIN_THROTTLE_PULSE);
+        switch (flightState_) {
+            case FlightState::ARMED:
+            case FlightState::LANDING:
+                if (baseThrottle > FlightConfig::MIN_THROTTLE_PERCENT) {
+                    calculateMotorOutputs();
+                } else {
+                    resetIntegrators();
+                    writeAllMotors(ESCConfig::MIN_THROTTLE_PULSE);
+                }
+                break;
+            case FlightState::INIT:
+            case FlightState::CALIBRATING:
+            case FlightState::DISARMED:
+            case FlightState::FAILSAFE:
+            default:
+                applyMotorOutputsForState();
+                break;
         }
 
         if (CalibrationConfig::ENABLE_DEBUG_PRINT ) { // Print every 50ms instead of every 5ms
@@ -618,6 +784,7 @@ void pidControlTask(void* parameter) {
         uint32_t loopElapsed = millis() - loopStartMs;
         if (loopElapsed > SystemConfig::MAX_TASK_EXECUTION_TIME_MS) {
             Serial.println("Warning: PID task exceeded execution budget");
+            triggerFailsafe("Failsafe: PID task exceeded execution budget");
         }
         esp_task_wdt_reset();
 
