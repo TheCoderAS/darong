@@ -32,7 +32,12 @@ struct CalibrationConfig {
     static constexpr bool MPU6050_CALIBRATION = true;
     static constexpr bool ENABLE_DEBUG_PRINT = false;
     static constexpr uint32_t EEPROM_MAGIC = 0x4D505543; // 'MPUC'
-    static constexpr size_t EEPROM_SIZE = 128;
+    static constexpr size_t EEPROM_SIZE = 256;
+};
+
+struct PIDStorageConfig {
+    static constexpr uint32_t EEPROM_MAGIC = 0x50494431; // 'PID1'
+    static constexpr size_t EEPROM_OFFSET = 64; // Reserve space after calibration block
 };
 
 // WiFi Access Point Configuration

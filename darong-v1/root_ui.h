@@ -244,6 +244,14 @@ const char ROOT_HTML[] = R"rawliteral(
       color: #cccccc;
     }
 
+    .calibration-status {
+      margin-top: 10px;
+      font-size: 0.9em;
+      color: #cccccc;
+      text-align: center;
+      min-height: 18px;
+    }
+
     /* Roll, Pitch, Yaw Controls */
     .stick-control {
       position: relative;
@@ -478,6 +486,21 @@ const char ROOT_HTML[] = R"rawliteral(
     </div>
   </div>
 
+  <h2 style="margin-top: 20px;">Calibrations</h2>
+  <div class="container">
+    <div class="control-section">
+      <div class="section-title">MPU6050</div>
+      <button id="calibrateMPUButton" class="pid-button">Calibrate Sensors</button>
+      <div id="mpuStatus" class="calibration-status">Idle</div>
+    </div>
+
+    <div class="control-section">
+      <div class="section-title">ESCs</div>
+      <button id="calibrateESCButton" class="pid-button">Calibrate ESCs</button>
+      <div id="escStatus" class="calibration-status">Idle</div>
+    </div>
+  </div>
+
   <!-- PID Control Section -->
   <h2 style="margin-top: 20px;">PID Tuning</h2>
   <div class="container">
@@ -565,6 +588,10 @@ const char ROOT_HTML[] = R"rawliteral(
     const resetPIDBtn = document.getElementById("resetPIDBtn");
     const resetFlightBtn = document.getElementById("resetFlightBtn");
     const pidStatus = document.getElementById("pidStatus");
+    const calibrateMPUButton = document.getElementById("calibrateMPUButton");
+    const calibrateESCButton = document.getElementById("calibrateESCButton");
+    const mpuStatus = document.getElementById("mpuStatus");
+    const escStatus = document.getElementById("escStatus");
 
     // Initialize stick controls
     const sticks = {
@@ -605,6 +632,9 @@ const char ROOT_HTML[] = R"rawliteral(
 
       resetFlightBtn.disabled = disabled;
       resetFlightBtn.style.opacity = disabled ? '0.5' : '1';
+
+      calibrateMPUButton.disabled = disabled;
+      calibrateESCButton.disabled = disabled;
 
     }
 
@@ -841,6 +871,32 @@ const char ROOT_HTML[] = R"rawliteral(
     resetFlightBtn.onclick = function () {
       if (isLocked) return;
       fetch("/resetFlight");
+    };
+
+    function runCalibration(button, statusElement, url, label) {
+      if (isLocked) return;
+      button.disabled = true;
+      statusElement.textContent = `${label} in progress...`;
+
+      fetch(url, { method: 'POST' })
+        .then(res => res.ok ? res.text() : Promise.reject(new Error(`${label} failed`)))
+        .then(message => {
+          statusElement.textContent = message || `${label} complete.`;
+        })
+        .catch(err => {
+          statusElement.textContent = err.message;
+        })
+        .finally(() => {
+          button.disabled = isLocked;
+        });
+    }
+
+    calibrateMPUButton.onclick = function () {
+      runCalibration(calibrateMPUButton, mpuStatus, '/calibrateMPU', 'MPU calibration');
+    };
+
+    calibrateESCButton.onclick = function () {
+      runCalibration(calibrateESCButton, escStatus, '/calibrateESC', 'ESC calibration');
     };
 
     const hookCall = () => {

@@ -42,6 +42,19 @@ struct CalibrationData {
     float gyroZ_offset;
 };
 
+struct PIDStateData {
+    uint32_t magic;
+    float kpRoll;
+    float kiRoll;
+    float kdRoll;
+    float kpPitch;
+    float kiPitch;
+    float kdPitch;
+    float kpYaw;
+    float kiYaw;
+    float kdYaw;
+};
+
 // Calibration offsets
 float accelX_offset_ = 0.0f;
 float accelY_offset_ = 0.0f;
@@ -74,15 +87,15 @@ float prevErrorPitch_ = 0.0f;
 float integralYaw_ = 0.0f;
 float prevErrorYaw_ = 0.0f;
 
-float Kp_roll_ = PIDConfig::Kp_roll;
-float Ki_roll_ = PIDConfig::Ki_roll;
-float Kd_roll_ = PIDConfig::Kd_roll;
-float Kp_pitch_ = PIDConfig::Kp_pitch;
-float Ki_pitch_ = PIDConfig::Ki_pitch;
-float Kd_pitch_ = PIDConfig::Kd_pitch;
-float Kp_yaw_ = PIDConfig::Kp_yaw;
-float Ki_yaw_ = PIDConfig::Ki_yaw;
-float Kd_yaw_ = PIDConfig::Kd_yaw;
+float Kp_roll_ = 0.0f;
+float Ki_roll_ = 0.0f;
+float Kd_roll_ = 0.0f;
+float Kp_pitch_ = 0.0f;
+float Ki_pitch_ = 0.0f;
+float Kd_pitch_ = 0.0f;
+float Kp_yaw_ = 0.0f;
+float Ki_yaw_ = 0.0f;
+float Kd_yaw_ = 0.0f;
 
 bool sensorHealthy_ = true;
 unsigned long lastCommandMicros_ = 0;
@@ -140,6 +153,11 @@ void doSetup(){
         saveCalibrationToEEPROM();
     }
 
+    bool pidLoaded = eepromReady_ && loadPIDFromEEPROM();
+    if (!pidLoaded) {
+        Serial.println("No PID constants found in EEPROM. Using zeros until updated.");
+    }
+
     setupESC();
     if (CalibrationConfig::ESC_CALIBRATION) {
         calibrateESC();
@@ -195,6 +213,29 @@ bool loadCalibrationFromEEPROM() {
     return true;
 }
 
+bool loadPIDFromEEPROM() {
+    PIDStateData data;
+    EEPROM.get(PIDStorageConfig::EEPROM_OFFSET, data);
+
+    if (data.magic != PIDStorageConfig::EEPROM_MAGIC) {
+        Serial.println("No valid PID data found in EEPROM. PID update required.");
+        return false;
+    }
+
+    Kp_roll_ = data.kpRoll;
+    Ki_roll_ = data.kiRoll;
+    Kd_roll_ = data.kdRoll;
+    Kp_pitch_ = data.kpPitch;
+    Ki_pitch_ = data.kiPitch;
+    Kd_pitch_ = data.kdPitch;
+    Kp_yaw_ = data.kpYaw;
+    Ki_yaw_ = data.kiYaw;
+    Kd_yaw_ = data.kdYaw;
+
+    Serial.println("Loaded PID constants from EEPROM.");
+    return true;
+}
+
 void saveCalibrationToEEPROM() {
     if (!eepromReady_) {
         Serial.println("EEPROM not initialized; skipping calibration save.");
@@ -213,6 +254,29 @@ void saveCalibrationToEEPROM() {
     EEPROM.put(0, data);
     EEPROM.commit();
     Serial.println("Saved MPU6050 calibration to EEPROM.");
+}
+
+void savePIDToEEPROM() {
+    if (!eepromReady_) {
+        Serial.println("EEPROM not initialized; skipping PID save.");
+        return;
+    }
+
+    PIDStateData data;
+    data.magic = PIDStorageConfig::EEPROM_MAGIC;
+    data.kpRoll = Kp_roll_;
+    data.kiRoll = Ki_roll_;
+    data.kdRoll = Kd_roll_;
+    data.kpPitch = Kp_pitch_;
+    data.kiPitch = Ki_pitch_;
+    data.kdPitch = Kd_pitch_;
+    data.kpYaw = Kp_yaw_;
+    data.kiYaw = Ki_yaw_;
+    data.kdYaw = Kd_yaw_;
+
+    EEPROM.put(PIDStorageConfig::EEPROM_OFFSET, data);
+    EEPROM.commit();
+    Serial.println("Saved PID constants to EEPROM.");
 }
 
 void calibrateMPU6050(){
@@ -393,7 +457,40 @@ void setupWebServer(){
         Kd_yaw_ = constrain(server_.arg("kdYaw").toFloat(), 0.0, 1.0);
 
         markCommandReceived();
+        savePIDToEEPROM();
         server_.send(200, "text/plain", "PID constants updated");
+    });
+
+    server_.on("/calibrateMPU", HTTP_POST, []() {
+        if (pidTaskHandle_ != NULL) {
+            vTaskSuspend(pidTaskHandle_);
+        }
+
+        calibrateMPU6050();
+        saveCalibrationToEEPROM();
+
+        if (pidTaskHandle_ != NULL) {
+            vTaskResume(pidTaskHandle_);
+        }
+
+        server_.send(200, "text/plain", "MPU6050 calibration complete");
+    });
+
+    server_.on("/calibrateESC", HTTP_POST, []() {
+        baseThrottle = 0;
+        disarmMotors(NULL);
+
+        if (pidTaskHandle_ != NULL) {
+            vTaskSuspend(pidTaskHandle_);
+        }
+
+        calibrateESC();
+
+        if (pidTaskHandle_ != NULL) {
+            vTaskResume(pidTaskHandle_);
+        }
+
+        server_.send(200, "text/plain", "ESC calibration complete");
     });
 
     server_.on("/resetFlight", HTTP_GET, []() {
@@ -532,7 +629,8 @@ void calculateMotorOutputs() {
     // Calculate PID outputs
     float rollOutput = computeRoll();
     float pitchOutput = computePitch();
-    float yawOutput = computeYaw();
+    // Yaw corrections temporarily disabled
+    float yawOutput = 0.0f;
 
     int fl_f_Adjust = -pitchOutput + rollOutput + yawOutput;  // Motor 1 (Front Left)
     int fr_r_Adjust = -pitchOutput - rollOutput - yawOutput;  // Motor 2 (Front Right)
