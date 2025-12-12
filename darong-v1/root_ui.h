@@ -165,92 +165,83 @@ const char ROOT_HTML[] = R"rawliteral(
     }
 
     /* PID Control Styles */
-    .pid-control {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      margin: 10px 0;
+    .pid-form {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(180px, 1fr));
+      gap: 15px;
       width: 100%;
     }
 
-    .pid-control label {
+    .pid-card {
+      background: rgba(0, 0, 0, 0.5);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 12px;
+      padding: 12px;
+    }
+
+    .pid-card h3 {
+      margin-bottom: 10px;
+      font-size: 1em;
+      letter-spacing: 0.5px;
+    }
+
+    .pid-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 8px;
+      align-items: center;
+    }
+
+    .pid-row label {
       font-size: 0.9em;
       color: #ffffff;
-      margin-bottom: 5px;
-      font-weight: 500;
     }
 
-    .pid-control-row {
+    .pid-row input {
+      width: 100%;
+      padding: 8px;
+      border-radius: 6px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      background: rgba(255, 255, 255, 0.08);
+      color: #ffffff;
+      font-size: 0.95em;
+    }
+
+    .pid-actions {
       display: flex;
-      align-items: center;
-      justify-content: center;
       gap: 10px;
+      justify-content: flex-end;
+      margin-top: 10px;
       width: 100%;
     }
 
-    .pid-value-display {
-      background: rgba(0, 0, 0, 0.5);
-      padding: 8px 0px;
-      border-radius: 8px;
-      min-width: 60px;
-      text-align: center;
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      font-weight: 600;
-      font-size: 0.875rem;
-    }
-
-    .pid-btn {
-      width: 35px;
-      height: 35px;
-      border-radius: 50%;
-      border: none;
-      background: rgba(255, 255, 255, 0.1);
-      color: #ffffff;
-      font-size: 18px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.3s ease;
-      display: flex;
-      align-items: center;
-      justify-content: center;
+    .pid-button {
+      padding: 10px 14px;
+      border-radius: 10px;
       border: 1px solid rgba(255, 255, 255, 0.2);
+      background: rgba(255, 255, 255, 0.12);
+      color: #ffffff;
+      cursor: pointer;
+      font-size: 0.95em;
+      transition: all 0.2s ease;
     }
 
-    .pid-btn:hover {
-      background: rgba(255, 255, 255, 0.2);
-      transform: scale(1.1);
+    .pid-button:hover {
+      background: rgba(255, 255, 255, 0.18);
+      transform: translateY(-1px);
     }
 
-    .pid-btn:active {
-      transform: scale(0.95);
-    }
-
-    .pid-btn:disabled {
+    .pid-button:disabled {
       opacity: 0.5;
       cursor: not-allowed;
       transform: none;
     }
 
-    .reset-btn {
-      width: 100%;
-      padding: 12px;
-      background: rgba(255, 255, 255, 0.1);
-      color: #ffffff;
-      border: 1px solid rgba(255, 255, 255, 0.2);
-      border-radius: 8px;
-      cursor: pointer;
-      font-size: 1em;
-      transition: all 0.3s ease;
-      margin-top: 10px;
-    }
-
-    .reset-btn:hover {
-      background: rgba(255, 255, 255, 0.2);
-      transform: translateY(-2px);
-    }
-
-    .reset-btn:active {
-      transform: translateY(0);
+    .pid-status {
+      margin-top: 8px;
+      font-size: 0.9em;
+      color: #cccccc;
     }
 
     /* Roll, Pitch, Yaw Controls */
@@ -490,106 +481,63 @@ const char ROOT_HTML[] = R"rawliteral(
   <!-- PID Control Section -->
   <h2 style="margin-top: 20px;">PID Tuning</h2>
   <div class="container">
-    <!-- Roll PID Controls -->
-    <div class="control-section">
-      <div class="section-title">Roll PID</div>
-
-      <div class="pid-control">
-        <label>Kp</label>
-        <div class="pid-control-row">
-          <button class="pid-btn" id="kpRollMinus">-</button>
-          <div class="pid-value-display" id="kpRollValue">2.400</div>
-          <button class="pid-btn" id="kpRollPlus">+</button>
+    <div class="pid-form">
+      <div class="pid-card">
+        <h3>Roll</h3>
+        <div class="pid-row">
+          <label for="kpRoll">Kp</label>
+          <input type="number" step="0.001" id="kpRoll" />
+        </div>
+        <div class="pid-row">
+          <label for="kiRoll">Ki</label>
+          <input type="number" step="0.001" id="kiRoll" />
+        </div>
+        <div class="pid-row">
+          <label for="kdRoll">Kd</label>
+          <input type="number" step="0.001" id="kdRoll" />
         </div>
       </div>
-
-      <div class="pid-control">
-        <label>Ki</label>
-        <div class="pid-control-row">
-          <button class="pid-btn" id="kiRollMinus">-</button>
-          <div class="pid-value-display" id="kiRollValue">1.900</div>
-          <button class="pid-btn" id="kiRollPlus">+</button>
+      <div class="pid-card">
+        <h3>Pitch</h3>
+        <div class="pid-row">
+          <label for="kpPitch">Kp</label>
+          <input type="number" step="0.001" id="kpPitch" />
+        </div>
+        <div class="pid-row">
+          <label for="kiPitch">Ki</label>
+          <input type="number" step="0.001" id="kiPitch" />
+        </div>
+        <div class="pid-row">
+          <label for="kdPitch">Kd</label>
+          <input type="number" step="0.001" id="kdPitch" />
         </div>
       </div>
-
-      <div class="pid-control">
-        <label>Kd</label>
-        <div class="pid-control-row">
-          <button class="pid-btn" id="kdRollMinus">-</button>
-          <div class="pid-value-display" id="kdRollValue">0.110</div>
-          <button class="pid-btn" id="kdRollPlus">+</button>
+      <div class="pid-card">
+        <h3>Yaw</h3>
+        <div class="pid-row">
+          <label for="kpYaw">Kp</label>
+          <input type="number" step="0.001" id="kpYaw" />
         </div>
-      </div>
-    </div>
-
-    <!-- Pitch PID Controls -->
-    <div class="control-section">
-      <div class="section-title">Pitch PID</div>
-
-      <div class="pid-control">
-        <label>Kp</label>
-        <div class="pid-control-row">
-          <button class="pid-btn" id="kpPitchMinus">-</button>
-          <div class="pid-value-display" id="kpPitchValue">2.400</div>
-          <button class="pid-btn" id="kpPitchPlus">+</button>
+        <div class="pid-row">
+          <label for="kiYaw">Ki</label>
+          <input type="number" step="0.001" id="kiYaw" />
         </div>
-      </div>
-
-      <div class="pid-control">
-        <label>Ki</label>
-        <div class="pid-control-row">
-          <button class="pid-btn" id="kiPitchMinus">-</button>
-          <div class="pid-value-display" id="kiPitchValue">1.900</div>
-          <button class="pid-btn" id="kiPitchPlus">+</button>
-        </div>
-      </div>
-
-      <div class="pid-control">
-        <label>Kd</label>
-        <div class="pid-control-row">
-          <button class="pid-btn" id="kdPitchMinus">-</button>
-          <div class="pid-value-display" id="kdPitchValue">0.110</div>
-          <button class="pid-btn" id="kdPitchPlus">+</button>
-        </div>
-      </div>
-    </div>
-    <!-- Yaw PID Controls -->
-    <div class="control-section">
-      <div class="section-title">Yaw PID</div>
-
-      <div class="pid-control">
-        <label>Kp</label>
-        <div class="pid-control-row">
-          <button class="pid-btn" id="kpYawMinus">-</button>
-          <div class="pid-value-display" id="kpYawValue">0.000</div>
-          <button class="pid-btn" id="kpYawPlus">+</button>
-        </div>
-      </div>
-
-      <div class="pid-control">
-        <label>Ki</label>
-        <div class="pid-control-row">
-          <button class="pid-btn" id="kiYawMinus">-</button>
-          <div class="pid-value-display" id="kiYawValue">0.000</div>
-          <button class="pid-btn" id="kiYawPlus">+</button>
-        </div>
-      </div>
-
-      <div class="pid-control">
-        <label>Kd</label>
-        <div class="pid-control-row">
-          <button class="pid-btn" id="kdYawMinus">-</button>
-          <div class="pid-value-display" id="kdYawValue">0.000</div>
-          <button class="pid-btn" id="kdYawPlus">+</button>
+        <div class="pid-row">
+          <label for="kdYaw">Kd</label>
+          <input type="number" step="0.001" id="kdYaw" />
         </div>
       </div>
     </div>
   </div>
 
   <!-- Reset Button -->
-  <div class="container" style="margin-top: 20px;">
-    <button id="resetPIDBtn" class="reset-btn">Reset PID</button>
-    <button id="resetFlightBtn" class="reset-btn">Reset Flight</button>
+  <div class="container" style="margin-top: 20px; flex-direction: column; align-items: stretch; gap: 10px;">
+    <div class="pid-actions">
+      <button id="savePIDBtn" class="pid-button">Save PID</button>
+      <button id="resetPIDBtn" class="pid-button">Reset PID</button>
+      <button id="resetFlightBtn" class="pid-button">Reset Flight</button>
+    </div>
+    <div id="pidStatus" class="pid-status"></div>
   </div>
   <div id="logContainer" style="margin-top: 20px; height: 200px; overflow: auto;">
   </div>
@@ -601,94 +549,22 @@ const char ROOT_HTML[] = R"rawliteral(
     const lockValue = document.getElementById("lockValue");
     const decreaseThrottleBtn = document.getElementById("decreaseThrottle");
     const increaseThrottleBtn = document.getElementById("increaseThrottle");
-
-    // Initialize PID control elements
-    const pidControls = {
-      kpRoll: {
-        minus: document.getElementById("kpRollMinus"),
-        plus: document.getElementById("kpRollPlus"),
-        value: document.getElementById("kpRollValue"),
-        currentValue: 2.400,
-        min: 0.0,
-        max: 10.0,
-        step: 0.1
-      },
-      kiRoll: {
-        minus: document.getElementById("kiRollMinus"),
-        plus: document.getElementById("kiRollPlus"),
-        value: document.getElementById("kiRollValue"),
-        currentValue: 1.900,
-        min: 0.0,
-        max: 10.0,
-        step: 0.05
-      },
-      kdRoll: {
-        minus: document.getElementById("kdRollMinus"),
-        plus: document.getElementById("kdRollPlus"),
-        value: document.getElementById("kdRollValue"),
-        currentValue: 0.110,
-        min: 0.0,
-        max: 2.0,
-        step: 0.005
-      },
-      kpPitch: {
-        minus: document.getElementById("kpPitchMinus"),
-        plus: document.getElementById("kpPitchPlus"),
-        value: document.getElementById("kpPitchValue"),
-        currentValue: 2.400,
-        min: 0.0,
-        max: 10.0,
-        step: 0.1
-      },
-      kiPitch: {
-        minus: document.getElementById("kiPitchMinus"),
-        plus: document.getElementById("kiPitchPlus"),
-        value: document.getElementById("kiPitchValue"),
-        currentValue: 1.900,
-        min: 0.0,
-        max: 10.0,
-        step: 0.05
-      },
-      kdPitch: {
-        minus: document.getElementById("kdPitchMinus"),
-        plus: document.getElementById("kdPitchPlus"),
-        value: document.getElementById("kdPitchValue"),
-        currentValue: 0.110,
-        min: 0.0,
-        max: 2.0,
-        step: 0.005
-      },
-      kpYaw: {
-        minus: document.getElementById("kpYawMinus"),
-        plus: document.getElementById("kpYawPlus"),
-        value: document.getElementById("kpYawValue"),
-        currentValue: 0.0,
-        min: 0.0,
-        max: 10.0,
-        step: 0.1
-      },
-      kiYaw: {
-        minus: document.getElementById("kiYawMinus"),
-        plus: document.getElementById("kiYawPlus"),
-        value: document.getElementById("kiYawValue"),
-        currentValue: 0.0,
-        min: 0.0,
-        max: 10.0,
-        step: 0.05
-      },
-      kdYaw: {
-        minus: document.getElementById("kdYawMinus"),
-        plus: document.getElementById("kdYawPlus"),
-        value: document.getElementById("kdYawValue"),
-        currentValue: 0.0,
-        min: 0.0,
-        max: 2.0,
-        step: 0.005
-      }
+    const pidInputs = {
+      kpRoll: document.getElementById("kpRoll"),
+      kiRoll: document.getElementById("kiRoll"),
+      kdRoll: document.getElementById("kdRoll"),
+      kpPitch: document.getElementById("kpPitch"),
+      kiPitch: document.getElementById("kiPitch"),
+      kdPitch: document.getElementById("kdPitch"),
+      kpYaw: document.getElementById("kpYaw"),
+      kiYaw: document.getElementById("kiYaw"),
+      kdYaw: document.getElementById("kdYaw")
     };
 
+    const savePIDBtn = document.getElementById("savePIDBtn");
     const resetPIDBtn = document.getElementById("resetPIDBtn");
     const resetFlightBtn = document.getElementById("resetFlightBtn");
+    const pidStatus = document.getElementById("pidStatus");
 
     // Initialize stick controls
     const sticks = {
@@ -698,6 +574,7 @@ const char ROOT_HTML[] = R"rawliteral(
     };
 
     let isLocked = false;
+    let pidLoaded = false;
 
     // Function to update controls state
     function updateControlsState() {
@@ -715,15 +592,16 @@ const char ROOT_HTML[] = R"rawliteral(
       });
 
       // Update PID controls
-      Object.values(pidControls).forEach(control => {
-        control.minus.disabled = disabled;
-        control.plus.disabled = disabled;
-        control.minus.style.opacity = disabled ? '0.5' : '1';
-        control.plus.style.opacity = disabled ? '0.5' : '1';
+      Object.values(pidInputs).forEach(input => {
+        input.disabled = disabled;
+        input.style.opacity = disabled ? '0.6' : '1';
       });
 
-      resetPIDBtn.disabled = disabled;
-      resetPIDBtn.style.opacity = disabled ? '0.5' : '1';
+      savePIDBtn.disabled = disabled || !pidLoaded;
+      savePIDBtn.style.opacity = (disabled || !pidLoaded) ? '0.5' : '1';
+
+      resetPIDBtn.disabled = disabled || !pidLoaded;
+      resetPIDBtn.style.opacity = (disabled || !pidLoaded) ? '0.5' : '1';
 
       resetFlightBtn.disabled = disabled;
       resetFlightBtn.style.opacity = disabled ? '0.5' : '1';
@@ -863,72 +741,103 @@ const char ROOT_HTML[] = R"rawliteral(
       });
     });
 
-    // PID Control Functions
-    function updatePIDValue(controlName, newValue) {
-      // console.log(controlName)
-      if (isLocked) return;
-
-      const control = pidControls[controlName];
-
-      // Constrain value to min/max
-      newValue = Math.max(control.min, Math.min(control.max, newValue));
-
-      // Update current value
-      control.currentValue = newValue;
-
-      // Update display
-      control.value.innerText = newValue.toFixed(3);
-
-      // Send to server
-      fetch(`/set${controlName.charAt(0).toUpperCase() + controlName.slice(1)}?value=${newValue}`);
-    }
-
-    function incrementPIDValue(controlName) {
-      const control = pidControls[controlName];
-      const newValue = control.currentValue + control.step;
-      updatePIDValue(controlName, newValue, false);
-    }
-
-    function decrementPIDValue(controlName) {
-      const control = pidControls[controlName];
-      const newValue = control.currentValue - control.step;
-      updatePIDValue(controlName, newValue, false);
-    }
-
-    // PID Control Event Listeners
-    Object.entries(pidControls).forEach(([controlName, control]) => {
-      control.minus.onclick = function () {
-        decrementPIDValue(controlName);
-      };
-
-      control.plus.onclick = function () {
-        incrementPIDValue(controlName);
-      };
-    });
-
-    // Reset PID Values
-    const defaultsPIDValues = {
-      kpRoll: 2.6,
-      kiRoll: 2.0,
-      kdRoll: 0.115,
-      kpPitch: 2.6,
-      kiPitch: 1.950,
-      kdPitch: 0.115,
-      kpYaw: 0.0,
-      kiYaw: 0.0,
-      kdYaw: 0.0
-    };
-    resetPIDBtn.onclick = function () {
-      if (isLocked) return;
-      resetPid();
+    const zeroPidValues = {
+      kpRoll: 0,
+      kiRoll: 0,
+      kdRoll: 0,
+      kpPitch: 0,
+      kiPitch: 0,
+      kdPitch: 0,
+      kpYaw: 0,
+      kiYaw: 0,
+      kdYaw: 0
     };
 
-    const resetPid = () => {
-      Object.entries(defaultsPIDValues).forEach(([controlName, defaultValue]) => {
-        updatePIDValue(controlName, defaultValue, true);
+    let loadedPidValues = { ...zeroPidValues };
+
+    function showPidStatus(message, isError = false) {
+      pidStatus.textContent = message;
+      pidStatus.style.color = isError ? '#ff9f9f' : '#cccccc';
+    }
+
+    function setPidFormValues(values) {
+      Object.entries(values).forEach(([key, value]) => {
+        if (pidInputs[key]) {
+          pidInputs[key].value = Number(value).toFixed(3);
+        }
       });
     }
-    resetPid();
+
+    function collectPidValues() {
+      const values = {};
+      for (const [key, input] of Object.entries(pidInputs)) {
+        const parsed = parseFloat(input.value);
+        if (Number.isNaN(parsed)) {
+          showPidStatus(`Invalid number for ${key}`, true);
+          return null;
+        }
+        values[key] = parsed;
+      }
+      return values;
+    }
+
+    function fetchCurrentPid() {
+      pidLoaded = false;
+      updateControlsState();
+      showPidStatus('Loading current PID values...');
+      fetch('/getPID')
+        .then(res => res.ok ? res.json() : Promise.reject(new Error('Unable to read PID values')))
+        .then(data => {
+          loadedPidValues = { ...data };
+          setPidFormValues(loadedPidValues);
+          pidLoaded = true;
+          updateControlsState();
+          showPidStatus('PID values loaded.');
+        })
+        .catch(() => {
+          loadedPidValues = { ...zeroPidValues };
+          setPidFormValues(loadedPidValues);
+          pidLoaded = true;
+          updateControlsState();
+          showPidStatus('PID values unavailable; using zeros.', true);
+        });
+    }
+
+    function sendPidUpdate(values) {
+      const body = new URLSearchParams();
+      Object.entries(values).forEach(([key, value]) => body.append(key, value));
+
+      showPidStatus('Saving PID values...');
+      fetch('/setPID', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString()
+      })
+        .then(res => {
+          if (!res.ok) {
+            throw new Error('Failed to save PID values');
+          }
+          showPidStatus('PID values saved successfully.');
+        })
+        .catch(err => {
+          showPidStatus(err.message, true);
+        });
+    }
+
+    savePIDBtn.onclick = function () {
+      if (isLocked || !pidLoaded) return;
+      const values = collectPidValues();
+      if (values) {
+        sendPidUpdate(values);
+      }
+    };
+
+    resetPIDBtn.onclick = function () {
+      if (isLocked || !pidLoaded) return;
+      setPidFormValues(loadedPidValues);
+      sendPidUpdate(loadedPidValues);
+    };
+
     resetFlightBtn.onclick = function () {
       if (isLocked) return;
       fetch("/resetFlight");
@@ -965,6 +874,8 @@ const char ROOT_HTML[] = R"rawliteral(
 
 
     // Initial state
+    setPidFormValues(loadedPidValues);
+    fetchCurrentPid();
     updateControlsState();
   </script>
 </body>
