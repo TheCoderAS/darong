@@ -16,23 +16,47 @@ TaskHandle_t webServerTaskHandle_ = NULL;
 TaskHandle_t pidTaskHandle_ = NULL;
 
 bool unregisterCurrentTaskFromWatchdog() {
-    return esp_task_wdt_delete(NULL) == ESP_OK;
-}
-
-void registerCurrentTaskWithWatchdog() {
-    esp_task_wdt_add(NULL);
-}
-
-void unregisterPIDTaskFromWatchdog() {
-    if (pidTaskHandle_ != NULL) {
-        esp_task_wdt_delete(pidTaskHandle_);
+    esp_err_t err = esp_task_wdt_delete(NULL);
+    if (err != ESP_OK) {
+        Serial.printf("WARN: Failed to unregister current task from watchdog (err=%d).\n", err);
+        return false;
     }
+    return true;
 }
 
-void registerPIDTaskWithWatchdog() {
-    if (pidTaskHandle_ != NULL) {
-        esp_task_wdt_add(pidTaskHandle_);
+bool registerCurrentTaskWithWatchdog() {
+    esp_err_t err = esp_task_wdt_add(NULL);
+    if (err != ESP_OK) {
+        Serial.printf("WARN: Failed to re-register current task with watchdog (err=%d).\n", err);
+        return false;
     }
+    return true;
+}
+
+bool unregisterPIDTaskFromWatchdog() {
+    if (pidTaskHandle_ == NULL) {
+        return true;
+    }
+
+    esp_err_t err = esp_task_wdt_delete(pidTaskHandle_);
+    if (err != ESP_OK) {
+        Serial.printf("WARN: Failed to unregister PID task from watchdog (err=%d).\n", err);
+        return false;
+    }
+    return true;
+}
+
+bool registerPIDTaskWithWatchdog() {
+    if (pidTaskHandle_ == NULL) {
+        return true;
+    }
+
+    esp_err_t err = esp_task_wdt_add(pidTaskHandle_);
+    if (err != ESP_OK) {
+        Serial.printf("WARN: Failed to re-register PID task with watchdog (err=%d).\n", err);
+        return false;
+    }
+    return true;
 }
 
 Adafruit_MPU6050 mpu_;
