@@ -88,7 +88,11 @@ struct FlightConfig {
     static constexpr float MAX_ROLL_ANGLE = 30.0;
     static constexpr float MAX_PITCH_ANGLE = 30.0;
     static constexpr float MAX_YAW_RATE = 200.0;
-    
+
+    // Arming Preconditions
+    static constexpr float ARMING_ATTITUDE_LIMIT_DEG = 5.0;
+    static constexpr float ARMING_MAX_THROTTLE_PERCENT = 5.0;
+
     // Throttle Settings
     static constexpr float MIN_THROTTLE_PERCENT = 5.0;
     static constexpr float MAX_THROTTLE_PERCENT = 80.0;
