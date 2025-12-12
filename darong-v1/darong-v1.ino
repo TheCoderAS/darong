@@ -359,95 +359,41 @@ void setupWebServer(){
         }
     });
 
-        // PID Control Routes
-    server_.on("/setKpRoll", HTTP_GET, []() {
-        if (server_.hasArg("value")) {
-            float kp = server_.arg("value").toFloat();
-            Kp_roll_ = constrain(kp, 0.0, 10.0);  // Range: 0-10
-            server_.send(200, "text/plain", "OK");
-        } else {
-            server_.send(400, "text/plain", "Bad Request");
-        }
+    server_.on("/getPID", HTTP_GET, []() {
+        char response[256];
+        snprintf(response, sizeof(response),
+                 "{\"kpRoll\":%.3f,\"kiRoll\":%.3f,\"kdRoll\":%.3f,\"kpPitch\":%.3f,\"kiPitch\":%.3f,\"kdPitch\":%.3f,\"kpYaw\":%.3f,\"kiYaw\":%.3f,\"kdYaw\":%.3f}",
+                 Kp_roll_, Ki_roll_, Kd_roll_,
+                 Kp_pitch_, Ki_pitch_, Kd_pitch_,
+                 Kp_yaw_, Ki_yaw_, Kd_yaw_);
+
+        server_.send(200, "application/json", response);
     });
 
-    server_.on("/setKiRoll", HTTP_GET, []() {
-        if (server_.hasArg("value")) {
-            float ki = server_.arg("value").toFloat();
-            Ki_roll_ = constrain(ki, 0.0, 10.0);  // Range: 0-1
-            server_.send(200, "text/plain", "OK");
-        } else {
-            server_.send(400, "text/plain", "Bad Request");
-        }
-    });
+    server_.on("/setPID", HTTP_POST, []() {
+        bool hasAllArgs = server_.hasArg("kpRoll") && server_.hasArg("kiRoll") && server_.hasArg("kdRoll") &&
+                          server_.hasArg("kpPitch") && server_.hasArg("kiPitch") && server_.hasArg("kdPitch") &&
+                          server_.hasArg("kpYaw") && server_.hasArg("kiYaw") && server_.hasArg("kdYaw");
 
-    server_.on("/setKdRoll", HTTP_GET, []() {
-        if (server_.hasArg("value")) {
-            float kd = server_.arg("value").toFloat();
-            Kd_roll_ = constrain(kd, 0.0, 2.0);  // Range: 0-1
-            server_.send(200, "text/plain", "OK");
-        } else {
-            server_.send(400, "text/plain", "Bad Request");
+        if (!hasAllArgs) {
+            server_.send(400, "text/plain", "Missing PID parameters");
+            return;
         }
-    });
 
-    server_.on("/setKpPitch", HTTP_GET, []() {
-        if (server_.hasArg("value")) {
-            float kp = server_.arg("value").toFloat();
-            Kp_pitch_ = constrain(kp, 0.0, 10.0);  // Range: 0-10
-            server_.send(200, "text/plain", "OK");
-        } else {
-            server_.send(400, "text/plain", "Bad Request");
-        }
-    });
+        Kp_roll_ = constrain(server_.arg("kpRoll").toFloat(), 0.0, 10.0);
+        Ki_roll_ = constrain(server_.arg("kiRoll").toFloat(), 0.0, 10.0);
+        Kd_roll_ = constrain(server_.arg("kdRoll").toFloat(), 0.0, 2.0);
 
-    server_.on("/setKiPitch", HTTP_GET, []() {
-        if (server_.hasArg("value")) {
-            float ki = server_.arg("value").toFloat();
-            Ki_pitch_ = constrain(ki, 0.0, 10.0);  // Range: 0-1
-            server_.send(200, "text/plain", "OK");
-        } else {
-            server_.send(400, "text/plain", "Bad Request");
-        }
-    });
+        Kp_pitch_ = constrain(server_.arg("kpPitch").toFloat(), 0.0, 10.0);
+        Ki_pitch_ = constrain(server_.arg("kiPitch").toFloat(), 0.0, 10.0);
+        Kd_pitch_ = constrain(server_.arg("kdPitch").toFloat(), 0.0, 2.0);
 
-    server_.on("/setKdPitch", HTTP_GET, []() {
-        if (server_.hasArg("value")) {
-            float kd = server_.arg("value").toFloat();
-            Kd_pitch_ = constrain(kd, 0.0, 2.0);  // Range: 0-1
-            server_.send(200, "text/plain", "OK");
-        } else {
-            server_.send(400, "text/plain", "Bad Request");
-        }
-    });
+        Kp_yaw_ = constrain(server_.arg("kpYaw").toFloat(), 0.0, 10.0);
+        Ki_yaw_ = constrain(server_.arg("kiYaw").toFloat(), 0.0, 1.0);
+        Kd_yaw_ = constrain(server_.arg("kdYaw").toFloat(), 0.0, 1.0);
 
-    server_.on("/setKpYaw", HTTP_GET, []() {
-        if (server_.hasArg("value")) {
-            float kp = server_.arg("value").toFloat();
-            Kp_yaw_ = constrain(kp, 0.0, 10.0);  // Range: 0-10
-            server_.send(200, "text/plain", "OK");
-        } else {
-            server_.send(400, "text/plain", "Bad Request");
-        }
-    });
-
-    server_.on("/setKiYaw", HTTP_GET, []() {
-        if (server_.hasArg("value")) {
-            float ki = server_.arg("value").toFloat();
-            Ki_yaw_ = constrain(ki, 0.0, 1.0);  // Range: 0-1
-            server_.send(200, "text/plain", "OK");
-        } else {
-            server_.send(400, "text/plain", "Bad Request");
-        }
-    });
-
-    server_.on("/setKdYaw", HTTP_GET, []() {
-        if (server_.hasArg("value")) {
-            float kd = server_.arg("value").toFloat();
-            Kd_yaw_ = constrain(kd, 0.0, 1.0);  // Range: 0-1
-            server_.send(200, "text/plain", "OK");
-        } else {
-            server_.send(400, "text/plain", "Bad Request");
-        }
+        markCommandReceived();
+        server_.send(200, "text/plain", "PID constants updated");
     });
 
     server_.on("/resetFlight", HTTP_GET, []() {

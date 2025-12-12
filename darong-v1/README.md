@@ -4,7 +4,7 @@ This project provides a minimal ESP32-based quadcopter controller with a web UI 
 
 ## Features
 - Complementary-filter attitude estimation using MPU6050 gyro/accelerometer data.
-- PID-based roll, pitch, and yaw stabilization with live gain tuning endpoints.
+- PID-based roll, pitch, and yaw stabilization with live gain tuning through a single form submission.
 - Simple web dashboard for throttle and attitude commands.
 - Safety additions: command timeout disarms, MPU6050 read failures disarm, and watchdog coverage for PID and web tasks.
 - MPU6050 calibration offsets are persisted to EEPROM so reboots reuse the last valid calibration.
@@ -13,6 +13,10 @@ This project provides a minimal ESP32-based quadcopter controller with a web UI 
 1. Configure pins and PID defaults in `config.h` (the board hosts its own access point by default).
 2. Flash `darong-v1.ino` to an ESP32 board with an attached MPU6050 and four ESCs.
 3. Connect your phone or laptop to the `Darong-AP` Wi-Fi network (password `flysafe123`) and open the printed AP IP address (default `192.168.4.1`) in a browser to use the web UI.
+
+### Web UI PID tuning
+- The PID card shows Kp/Ki/Kd inputs for roll, pitch, and yaw. Enter the desired values and click **Save PID** to send them in a single request to the controller (`/setPID`).
+- The controller exposes `/getPID` for the UI to preload the latest in-memory gains; **Reset PID** fills the defaults shown in `config.h` and posts them back to the controller.
 
 ## Safety notes
 - Motors arm only when throttle exceeds the configured minimum and recent commands are present.
