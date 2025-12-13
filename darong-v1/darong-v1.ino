@@ -4,6 +4,7 @@
 #include <Adafruit_Sensor.h>
 #include <ESP32Servo.h>
 #include <cmath>
+#include <cstring>
 #include <EEPROM.h>
 #include <WiFi.h>
 #include <WebServer.h>
@@ -633,7 +634,31 @@ void setupWiFi() {
 
 void setupWebServer(){
     server_.on("/", HTTP_GET, []() {
-        server_.send(200, "text/html", ROOT_HTML);
+        const size_t chunkSize = 1024;
+        const size_t totalLen = strlen(ROOT_HTML);
+
+        bool watchdogPaused = unregisterCurrentTaskFromWatchdog();
+
+        server_.setContentLength(CONTENT_LENGTH_UNKNOWN);
+        server_.send(200, "text/html", "");
+
+        size_t sent = 0;
+        while (sent < totalLen) {
+            size_t toSend = min(chunkSize, totalLen - sent);
+            server_.sendContent_P(ROOT_HTML + sent, toSend);
+            sent += toSend;
+
+            if (!watchdogPaused) {
+                esp_task_wdt_reset();
+            }
+            vTaskDelay(1);
+        }
+
+        server_.sendContent("");
+
+        if (watchdogPaused) {
+            registerCurrentTaskWithWatchdog();
+        }
     });
 
     server_.on("/setThrottle", HTTP_GET, []() {
