@@ -666,6 +666,11 @@ void setupWebServer(){
     });
 
     server_.on("/setThrottle", HTTP_GET, []() {
+        if (testModeEnabled_) {
+            server_.send(409, "text/plain", "Test mode active");
+            return;
+        }
+
         if (server_.hasArg("value")) {
             int throttle = server_.arg("value").toInt();
             baseThrottle = constrain(throttle, 0, FlightConfig::MAX_THROTTLE_PERCENT);
