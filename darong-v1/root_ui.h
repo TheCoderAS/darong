@@ -52,6 +52,40 @@ const char ROOT_HTML[] = R"rawliteral(
       border: 1px solid rgba(255, 255, 255, 0.1);
     }
 
+    .loading-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.75);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      gap: 16px;
+      color: #ffffff;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      z-index: 10;
+    }
+
+    .loader {
+      width: 48px;
+      height: 48px;
+      border: 5px solid rgba(255, 255, 255, 0.2);
+      border-top-color: #ffffff;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      from {
+        transform: rotate(0deg);
+      }
+
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
     .control-section {
       display: flex;
       flex-direction: column;
@@ -486,6 +520,10 @@ const char ROOT_HTML[] = R"rawliteral(
 </head>
 
 <body>
+  <div class="loading-overlay" id="loadingOverlay" aria-live="polite">
+    <div class="loader" aria-hidden="true"></div>
+    <div id="loadingMessage">Preparing interface...</div>
+  </div>
   <h2>Quadcopter Control Panel</h2>
   <div class="container">
     <!-- Throttle Control -->
@@ -663,6 +701,8 @@ const char ROOT_HTML[] = R"rawliteral(
     const calibrateESCButton = document.getElementById("calibrateESCButton");
     const mpuStatus = document.getElementById("mpuStatus");
     const escStatus = document.getElementById("escStatus");
+    const loadingOverlay = document.getElementById("loadingOverlay");
+    const loadingMessage = document.getElementById("loadingMessage");
 
     // Initialize stick controls
     const sticks = {
@@ -671,11 +711,24 @@ const char ROOT_HTML[] = R"rawliteral(
       yaw: { element: document.getElementById("yawStick"), handle: document.getElementById("yawStickHandle"), value: document.getElementById("yawValue"), range: 200 }
     };
 
+    const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+    let isInitialLoading = true;
     let isLocked = false;
     let pidLoaded = false;
     let flightState = 'INIT';
+    let statusRefreshTimer = null;
 
-    const isControlsDisabled = () => isLocked || !(flightState === 'ARMED' || flightState === 'LANDING');
+    const isControlsDisabled = () => isInitialLoading || isLocked || !(flightState === 'ARMED' || flightState === 'LANDING');
+
+    function showLoader(message = 'Loading...') {
+      loadingOverlay.style.display = 'flex';
+      loadingMessage.innerText = message;
+    }
+
+    function hideLoader() {
+      loadingOverlay.style.display = 'none';
+    }
 
     // Function to update controls state
     function updateControlsState() {
@@ -779,16 +832,28 @@ const char ROOT_HTML[] = R"rawliteral(
       updateControlsState();
     }
 
-    function refreshStatus() {
-      fetch('/getStatus')
+    function refreshStatus(options = {}) {
+      const { isInitial = false } = options;
+
+      if (isInitial) {
+        showLoader('Loading flight status...');
+      }
+
+      return fetch('/getStatus')
         .then(res => res.ok ? res.json() : Promise.reject())
         .then(data => {
           setFlightState(data.state);
           throttleValue.innerText = data.throttle;
           masterThrottle.value = data.throttle;
+          if (isInitial) {
+            loadingMessage.innerText = 'Flight status loaded.';
+          }
         })
         .catch(() => {
           flightStatusNote.innerText = 'Unable to read flight status.';
+          if (isInitial) {
+            loadingMessage.innerText = 'Failed to load flight status.';
+          }
         });
     }
 
@@ -953,11 +1018,17 @@ const char ROOT_HTML[] = R"rawliteral(
       return values;
     }
 
-    function fetchCurrentPid() {
+    function fetchCurrentPid(options = {}) {
+      const { isInitial = false } = options;
       pidLoaded = false;
       updateControlsState();
+
+      if (isInitial) {
+        showLoader('Loading PID values...');
+      }
+
       showPidStatus('Loading current PID values...');
-      fetch('/getPID')
+      return fetch('/getPID')
         .then(res => res.ok ? res.json() : Promise.reject(new Error('Unable to read PID values')))
         .then(data => {
           loadedPidValues = { ...data };
@@ -965,6 +1036,9 @@ const char ROOT_HTML[] = R"rawliteral(
           pidLoaded = true;
           updateControlsState();
           showPidStatus('PID values loaded.');
+          if (isInitial) {
+            loadingMessage.innerText = 'PID values loaded.';
+          }
         })
         .catch(() => {
           loadedPidValues = { ...zeroPidValues };
@@ -972,6 +1046,9 @@ const char ROOT_HTML[] = R"rawliteral(
           pidLoaded = true;
           updateControlsState();
           showPidStatus('PID values unavailable; using zeros.', true);
+          if (isInitial) {
+            loadingMessage.innerText = 'Failed to load PID values.';
+          }
         });
     }
 
@@ -1073,10 +1150,31 @@ const char ROOT_HTML[] = R"rawliteral(
 
     // Initial state
     setPidFormValues(loadedPidValues);
-    fetchCurrentPid();
-    refreshStatus();
-    setInterval(refreshStatus, 1000);
-    updateControlsState();
+    function startStatusRefresh() {
+      if (statusRefreshTimer) {
+        clearInterval(statusRefreshTimer);
+      }
+      statusRefreshTimer = setInterval(() => refreshStatus(), 1000);
+    }
+
+    async function runInitialLoad() {
+      showLoader('Preparing interface...');
+      updateControlsState();
+
+      try {
+        await delay(1000);
+        await refreshStatus({ isInitial: true });
+        await delay(1000);
+        await fetchCurrentPid({ isInitial: true });
+      } finally {
+        isInitialLoading = false;
+        hideLoader();
+        updateControlsState();
+        startStatusRefresh();
+      }
+    }
+
+    runInitialLoad();
   </script>
 </body>
 
