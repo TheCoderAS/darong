@@ -7,14 +7,14 @@ struct SystemConfig {
 
     // PID Control Task Configuration
     static constexpr int PID_TASK_STACK_SIZE = 8192;
-    static constexpr int PID_TASK_PRIORITY = 1;  // Higher priority than web server
+    static constexpr int PID_TASK_PRIORITY = 3;  // Highest priority task
     static constexpr int PID_TASK_CORE = 0;      // Run on Core 0
     static constexpr int PID_UPDATE_INTERVAL_MS = 4; // 200Hz update rate
 
     // Web Server Task Configuration
     static constexpr int WEB_SERVER_PORT = 80;
     static constexpr int WEB_SERVER_TASK_STACK_SIZE = 8192;
-    static constexpr int WEB_SERVER_TASK_PRIORITY = 2;
+    static constexpr int WEB_SERVER_TASK_PRIORITY = 1;
     static constexpr int WEB_SERVER_TASK_CORE = 1;  // Run on Core 1
     static constexpr int WEB_SERVER_UPDATE_INTERVAL_MS = 5;  // Faster web server response
 
