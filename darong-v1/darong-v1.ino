@@ -574,7 +574,16 @@ void setupWiFi() {
     Serial.print("Starting access point: ");
     Serial.println(WiFiConfig::AP_SSID);
 
+    IPAddress local_ip(WiFiConfig::AP_IP[0], WiFiConfig::AP_IP[1], WiFiConfig::AP_IP[2], WiFiConfig::AP_IP[3]);
+    IPAddress gateway(WiFiConfig::AP_GATEWAY[0], WiFiConfig::AP_GATEWAY[1], WiFiConfig::AP_GATEWAY[2], WiFiConfig::AP_GATEWAY[3]);
+    IPAddress subnet(WiFiConfig::AP_SUBNET[0], WiFiConfig::AP_SUBNET[1], WiFiConfig::AP_SUBNET[2], WiFiConfig::AP_SUBNET[3]);
+
     WiFi.mode(WIFI_AP);
+    if (!WiFi.softAPConfig(local_ip, gateway, subnet)) {
+        Serial.println("ERROR: Failed to configure static AP IP");
+        return;
+    }
+
     bool apStarted = WiFi.softAP(WiFiConfig::AP_SSID, WiFiConfig::AP_PASSWORD);
     if (!apStarted) {
         Serial.println("ERROR: Failed to start access point");

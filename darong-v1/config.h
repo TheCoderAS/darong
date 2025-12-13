@@ -4,7 +4,7 @@
 // System Configuration
 struct SystemConfig {
     static constexpr unsigned long SERIAL_BAUD_RATE = 115200;
-    
+
     // PID Control Task Configuration
     static constexpr int PID_TASK_STACK_SIZE = 8192;
     static constexpr int PID_TASK_PRIORITY = 1;  // Higher priority than web server
@@ -44,6 +44,9 @@ struct PIDStorageConfig {
 struct WiFiConfig {
     static constexpr const char* AP_SSID = "Darong-AP";
     static constexpr const char* AP_PASSWORD = "flysafe123"; // Minimum 8 characters for WPA2
+    static constexpr uint8_t AP_IP[4] = {192, 168, 10, 1};
+    static constexpr uint8_t AP_GATEWAY[4] = {192, 168, 10, 1};
+    static constexpr uint8_t AP_SUBNET[4] = {255, 255, 255, 0};
 };
 
 // ESC Configuration
@@ -52,7 +55,7 @@ struct ESCConfig {
     static constexpr int FR_PIN = 15;  // X -> Front Right // + -> Right
     static constexpr int BL_PIN = 14;  // X -> Back Left // + -> Left
     static constexpr int BR_PIN = 13;  // X -> Back Right // + -> Back
-    
+
     static constexpr int MIN_THROTTLE_PULSE = 1000;
     static constexpr int MAX_THROTTLE_PULSE = 2000;
     static constexpr int ESC_FREQ = 500;
@@ -64,7 +67,7 @@ struct PIDConfig {
     static constexpr float Kp_roll = 2.4;
     static constexpr float Ki_roll = 1.9;
     static constexpr float Kd_roll = 0.110;
-    
+
     // Pitch PID
     static constexpr float Kp_pitch = 2.4;
     static constexpr float Ki_pitch = 1.9;
@@ -74,7 +77,7 @@ struct PIDConfig {
     static constexpr float Kp_yaw = 2.0;
     static constexpr float Ki_yaw = 0.0;
     static constexpr float Kd_yaw = 0.0;
-    
+
     // PID Limits
     static constexpr float MAX_INTEGRAL = 400.0;
     static constexpr float MAX_PID_OUTPUT = 400.0;
@@ -106,4 +109,4 @@ struct MPUConfig {
     static constexpr float ACCEL_THRESHOLD = 0.1; // m/s^2
 };
 
-#endif // CONFIG_H 
+#endif // CONFIG_H
