@@ -333,6 +333,13 @@ void doSetup(){
 
     setFlightState(FlightState::CALIBRATING, "Boot");
 
+    // Clean up any watchdog that the ROM or previous run may have set up so we
+    // can safely reconfigure it with our timeout.
+    esp_err_t wdtDeinit = esp_task_wdt_deinit();
+    if (wdtDeinit != ESP_OK && wdtDeinit != ESP_ERR_INVALID_STATE) {
+        Serial.printf("WARN: Failed to deinit existing watchdog (err=%d).\n", wdtDeinit);
+    }
+
     uint32_t watchdogTimeoutMs = max(1000, SystemConfig::WATCHDOG_TIMEOUT_MS);
     esp_task_wdt_config_t watchdogConfig = {
         .timeout_ms = watchdogTimeoutMs,
