@@ -15,9 +15,6 @@
 TaskHandle_t webServerTaskHandle_ = NULL;
 TaskHandle_t pidTaskHandle_ = NULL;
 
-volatile bool pidCalibrationPauseRequested_ = false;
-volatile bool pidCalibrationPaused_ = false;
-
 bool unregisterCurrentTaskFromWatchdog() {
     esp_err_t err = esp_task_wdt_delete(NULL);
     if (err != ESP_OK) {
@@ -28,22 +25,8 @@ bool unregisterCurrentTaskFromWatchdog() {
 }
 
 bool pauseWatchdogForCalibration() {
-    if (pidTaskHandle_ != NULL) {
-        pidCalibrationPauseRequested_ = true;
-        const uint32_t start = millis();
-        while (!pidCalibrationPaused_) {
-            if (millis() - start > SystemConfig::WATCHDOG_TIMEOUT_MS) {
-                Serial.println("ERROR: PID task did not pause for calibration in time.");
-                pidCalibrationPauseRequested_ = false;
-                return false;
-            }
-            vTaskDelay(pdMS_TO_TICKS(1));
-        }
-    }
-
     if (!unregisterCurrentTaskFromWatchdog()) {
         Serial.println("ERROR: Cannot pause watchdog for calibration.");
-        pidCalibrationPauseRequested_ = false;
         return false;
     }
 
@@ -52,9 +35,9 @@ bool pauseWatchdogForCalibration() {
             Serial.println("ERROR: Cannot pause PID task watchdog for calibration.");
             // Attempt to restore web server watchdog before returning
             registerCurrentTaskWithWatchdog();
-            pidCalibrationPauseRequested_ = false;
             return false;
         }
+        vTaskSuspend(pidTaskHandle_);
     }
 
     return true;
@@ -64,6 +47,7 @@ bool resumeWatchdogAfterCalibration() {
     bool success = true;
 
     if (pidTaskHandle_ != NULL) {
+        vTaskResume(pidTaskHandle_);
         if (!registerPIDTaskWithWatchdog()) {
             Serial.println("ERROR: Failed to re-register PID task with watchdog after calibration.");
             success = false;
@@ -73,17 +57,6 @@ bool resumeWatchdogAfterCalibration() {
     if (!registerCurrentTaskWithWatchdog()) {
         Serial.println("ERROR: Failed to re-register web server task with watchdog after calibration.");
         success = false;
-    }
-
-    pidCalibrationPauseRequested_ = false;
-    const uint32_t resumeStart = millis();
-    while (pidCalibrationPaused_) {
-        if (millis() - resumeStart > SystemConfig::WATCHDOG_TIMEOUT_MS) {
-            Serial.println("ERROR: PID task did not resume after calibration.");
-            success = false;
-            break;
-        }
-        vTaskDelay(pdMS_TO_TICKS(1));
     }
 
     return success;
@@ -403,7 +376,7 @@ void doSetup(){
     }
 
     bool calibrationLoaded = eepromReady_ && loadCalibrationFromEEPROM();
-    if (!calibrationLoaded) {
+    if (!calibrationLoaded || CalibrationConfig::MPU6050_CALIBRATION) {
         bool calibrationSuccess = calibrateMPU6050();
         if (calibrationSuccess) {
             saveCalibrationToEEPROM();
@@ -549,7 +522,7 @@ bool calibrateMPU6050(){
     unsigned long calibrationStart = millis();
 
     for (int i = 0; i < MPUConfig::CALIBRATION_SAMPLES; i++) {
-        Serial.printf("%d\n",i);
+        // Serial.printf("%d ",i);
         sensors_event_t a, g, temp;
         if (!mpu_.getEvent(&a, &g, &temp)) {
             Serial.println("ERROR: Failed to read MPU6050 event during calibration.");
@@ -557,13 +530,11 @@ bool calibrateMPU6050(){
             return false;
         }
 
- Serial.printf("yahan bhi aaya %d", i);
         if (millis() - calibrationStart > MPUConfig::CALIBRATION_TIMEOUT_MS) {
             Serial.println("ERROR: MPU6050 calibration timed out.");
             sensorHealthy_ = false;
             return false;
         }
- Serial.printf("haa %d\n",i);
         accelX_sum += a.acceleration.x;
         accelY_sum += a.acceleration.y;
         accelZ_sum += a.acceleration.z;
@@ -620,15 +591,15 @@ void setupESC(){
 void calibrateESC() {
     Serial.println("--------------------------------------------------");
     Serial.println("IMPORTANT: Make sure your ESCs are powered on now!");
-    delayWithWdt(2000);      // yield
+    delayWithWdt(CalibrationConfig::ESC_CALIBRATION_DELAY_MS);      // yield
 
     Serial.println("\nStep 1: Sending maximum signal (2000) to all motors");
     writeAllMotors(ESCConfig::MAX_THROTTLE_PULSE);
-    delayWithWdt(2000);      // yield
+    delayWithWdt(CalibrationConfig::ESC_CALIBRATION_DELAY_MS);      // yield
 
     Serial.println("\nStep 2: Sending minimum signal (1000) to all motors");
     writeAllMotors(ESCConfig::MIN_THROTTLE_PULSE);
-    delayWithWdt(2000);      // yield
+    delayWithWdt(CalibrationConfig::ESC_CALIBRATION_DELAY_MS);      // yield
 
     Serial.println("\nESCs Calibration completed!");
 }
@@ -917,22 +888,12 @@ bool runPIDTask(){
     Serial.println("PID control task created successfully");
     return true;
 }
+
+
 void pidControlTask(void* parameter) {
     TickType_t lastWakeTime = xTaskGetTickCount();  // Initialize once
     esp_task_wdt_add(NULL);
     while (true) {
-        if (pidCalibrationPauseRequested_) {
-            pidCalibrationPaused_ = true;
-            while (pidCalibrationPauseRequested_) {
-                esp_task_wdt_reset();
-                vTaskDelay(pdMS_TO_TICKS(5));
-            }
-            pidCalibrationPaused_ = false;
-            previousMicros_ = micros();
-            vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(SystemConfig::PID_UPDATE_INTERVAL_MS));
-            continue;
-        }
-
         unsigned long currentMicros = micros();
         dt_ = (float)(currentMicros - previousMicros_) / 1000000.0;
         dt_ = max(dt_, PIDConfig::MIN_DT_SECONDS);
