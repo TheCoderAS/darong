@@ -291,6 +291,13 @@ const char ROOT_HTML[] = R"rawliteral(
       transform: none;
     }
 
+    .pid-button.disabled-static,
+    .pid-button.disabled-static:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+      filter: grayscale(60%);
+    }
+
     .pid-status {
       margin-top: 8px;
       font-size: 0.9em;
@@ -556,7 +563,7 @@ const char ROOT_HTML[] = R"rawliteral(
   <div class="container">
     <div class="control-section">
       <div class="section-title">MPU6050</div>
-      <button id="calibrateMPUButton" class="pid-button">Calibrate Sensors</button>
+      <button id="calibrateMPUButton" class="pid-button disabled-static" disabled aria-disabled="true">Calibrate Sensors</button>
       <div id="mpuStatus" class="calibration-status">Idle</div>
     </div>
 
@@ -664,6 +671,12 @@ const char ROOT_HTML[] = R"rawliteral(
     const mpuStatus = document.getElementById("mpuStatus");
     const escStatus = document.getElementById("escStatus");
 
+    if (calibrateMPUButton) {
+      calibrateMPUButton.disabled = true;
+      calibrateMPUButton.classList.add('disabled-static');
+      calibrateMPUButton.title = 'MPU calibration is unavailable';
+    }
+
     // Initialize stick controls
     const sticks = {
       roll: { element: document.getElementById("rollStick"), handle: document.getElementById("rollStickHandle"), value: document.getElementById("rollValue"), range: 30 },
@@ -707,7 +720,7 @@ const char ROOT_HTML[] = R"rawliteral(
       resetFlightBtn.disabled = disabled;
       resetFlightBtn.style.opacity = disabled ? '0.5' : '1';
 
-      calibrateMPUButton.disabled = disabled;
+      calibrateMPUButton.disabled = true;
       calibrateESCButton.disabled = disabled;
 
       armButton.disabled = isLocked || flightState === 'ARMED' || flightState === 'LANDING';
@@ -1032,10 +1045,6 @@ const char ROOT_HTML[] = R"rawliteral(
           button.disabled = isLocked;
         });
     }
-
-    calibrateMPUButton.onclick = function () {
-      runCalibration(calibrateMPUButton, mpuStatus, '/calibrateMPU', 'MPU calibration');
-    };
 
     calibrateESCButton.onclick = function () {
       runCalibration(calibrateESCButton, escStatus, '/calibrateESC', 'ESC calibration');
