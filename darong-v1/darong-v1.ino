@@ -330,8 +330,14 @@ void doSetup(){
 
     setFlightState(FlightState::CALIBRATING, "Boot");
 
-    int watchdogTimeoutSeconds = max(1, (int)std::ceil(SystemConfig::WATCHDOG_TIMEOUT_MS / 1000.0));
-    if (esp_task_wdt_init(watchdogTimeoutSeconds, true) != ESP_OK) {
+    uint32_t watchdogTimeoutMs = max(1000, SystemConfig::WATCHDOG_TIMEOUT_MS);
+    esp_task_wdt_config_t watchdogConfig = {
+        .timeout_ms = watchdogTimeoutMs,
+        .trigger_panic = true,
+        .idle_core_mask = (1 << portNUM_PROCESSORS) - 1,
+    };
+
+    if (esp_task_wdt_init(&watchdogConfig) != ESP_OK) {
         Serial.println("ERROR: Failed to initialize watchdog timer!");
     }
 
