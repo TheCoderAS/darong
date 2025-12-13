@@ -20,8 +20,8 @@ struct SystemConfig {
 
     // System Stability Configuration
     static constexpr int MAX_TASK_EXECUTION_TIME_MS = 100;  // Max time for PID task (50)
-    static constexpr int WEB_SERVER_TIMEOUT_MS = 300;      // Max time for web server cycle (100)
-    static constexpr int WATCHDOG_TIMEOUT_MS = 100;       // Watchdog timeout
+    static constexpr int WEB_SERVER_TIMEOUT_MS = 1500;      // Max time for web server cycle (100)
+    static constexpr int WATCHDOG_TIMEOUT_MS = 1500;       // Watchdog timeout
     static constexpr int COMMAND_TIMEOUT_MS = 500;        // Failsafe timeout for incoming commands
 };
 
