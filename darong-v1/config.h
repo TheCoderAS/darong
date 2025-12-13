@@ -104,6 +104,7 @@ struct FlightConfig {
 // MPU6050 Configuration
 struct MPUConfig {
     static constexpr int CALIBRATION_SAMPLES = 1000;
+    static constexpr uint32_t CALIBRATION_TIMEOUT_MS = 10000;
     static constexpr float COMPLEMENTARY_FILTER_ALPHA = 0.98;
     static constexpr float GYRO_THRESHOLD = 0.1;  // deg/s
     static constexpr float ACCEL_THRESHOLD = 0.1; // m/s^2

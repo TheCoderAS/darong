@@ -365,8 +365,10 @@ void doSetup(){
 
     bool calibrationLoaded = eepromReady_ && loadCalibrationFromEEPROM();
     if (!calibrationLoaded) {
-        calibrateMPU6050();
-        saveCalibrationToEEPROM();
+        bool calibrationSuccess = calibrateMPU6050();
+        if (calibrationSuccess) {
+            saveCalibrationToEEPROM();
+        }
     }
 
     bool pidLoaded = eepromReady_ && loadPIDFromEEPROM();
@@ -497,17 +499,28 @@ void savePIDToEEPROM() {
     Serial.println("Saved PID constants to EEPROM.");
 }
 
-void calibrateMPU6050(){
+bool calibrateMPU6050(){
     Serial.println("Calibrating MPU6050...");
     Serial.println("Please keep the drone still and level!");
     delay(2000);
 
     float accelX_sum = 0, accelY_sum = 0, accelZ_sum = 0;
     float gyroX_sum = 0, gyroY_sum = 0, gyroZ_sum = 0;
+    unsigned long calibrationStart = millis();
 
     for (int i = 0; i < MPUConfig::CALIBRATION_SAMPLES; i++) {
         sensors_event_t a, g, temp;
-        mpu_.getEvent(&a, &g, &temp);
+        if (!mpu_.getEvent(&a, &g, &temp)) {
+            Serial.println("ERROR: Failed to read MPU6050 event during calibration.");
+            sensorHealthy_ = false;
+            return false;
+        }
+
+        if (millis() - calibrationStart > MPUConfig::CALIBRATION_TIMEOUT_MS) {
+            Serial.println("ERROR: MPU6050 calibration timed out.");
+            sensorHealthy_ = false;
+            return false;
+        }
 
         accelX_sum += a.acceleration.x;
         accelY_sum += a.acceleration.y;
@@ -528,7 +541,7 @@ void calibrateMPU6050(){
     gyroZ_offset_ = gyroZ_sum / MPUConfig::CALIBRATION_SAMPLES;
 
     printCalibrationData();
-
+    return true;
 }
 
 void printCalibrationData() {
@@ -731,15 +744,26 @@ void setupWebServer(){
 
         setFlightState(FlightState::CALIBRATING, "MPU calibration request");
 
-        calibrateMPU6050();
-        saveCalibrationToEEPROM();
+        bool calibrationSuccess = calibrateMPU6050();
+        if (calibrationSuccess) {
+            saveCalibrationToEEPROM();
+        }
 
         bool watchdogResumed = resumeWatchdogAfterCalibration();
 
-        setFlightState(FlightState::DISARMED, "MPU calibration complete");
+        if (calibrationSuccess) {
+            setFlightState(FlightState::DISARMED, "MPU calibration complete");
+        } else {
+            setFlightState(FlightState::DISARMED, "MPU calibration failed");
+        }
 
         if (!watchdogResumed) {
             server_.send(500, "text/plain", "Calibration complete, but watchdog recovery failed");
+            return;
+        }
+
+        if (!calibrationSuccess) {
+            server_.send(500, "text/plain", "MPU6050 calibration failed");
             return;
         }
 
