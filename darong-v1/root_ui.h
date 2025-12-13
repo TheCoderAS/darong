@@ -91,6 +91,42 @@ const char ROOT_HTML[] = R"rawliteral(
       border: 1px solid rgba(255, 255, 255, 0.1);
     }
 
+    .motor-toggle-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(120px, 1fr));
+      gap: 10px;
+      width: 100%;
+      margin-top: 10px;
+    }
+
+    .motor-toggle {
+      padding: 10px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      background: rgba(255, 255, 255, 0.08);
+      color: #ffffff;
+      cursor: pointer;
+      transition: background 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
+      font-weight: 600;
+      text-align: center;
+    }
+
+    .motor-toggle:hover:not(:disabled) {
+      background: rgba(255, 255, 255, 0.16);
+      transform: translateY(-1px);
+    }
+
+    .motor-toggle:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .motor-toggle.active {
+      background: linear-gradient(135deg, #2d2d2d, #1a1a1a);
+      border-color: rgba(255, 255, 255, 0.35);
+    }
+
     /* Throttle Control */
     .throttle-control {
       display: flex;
@@ -552,6 +588,25 @@ const char ROOT_HTML[] = R"rawliteral(
     </div>
   </div>
 
+  <h2 style="margin-top: 20px;">Motor Test</h2>
+  <div class="container">
+    <div class="control-section" style="flex: 1; min-width: 240px;">
+      <div class="section-title">Test Mode</div>
+      <label class="switch">
+        <input type="checkbox" id="testModeToggle">
+        <span class="slider"></span>
+      </label>
+      <div class="value-display">Test Mode: <span id="testModeValue">OFF</span></div>
+      <div class="motor-toggle-grid">
+        <button class="motor-toggle" data-motor="fl">Front Left</button>
+        <button class="motor-toggle" data-motor="fr">Front Right</button>
+        <button class="motor-toggle" data-motor="bl">Back Left</button>
+        <button class="motor-toggle" data-motor="br">Back Right</button>
+      </div>
+      <div class="status-note" style="margin-top: 10px;">Selected motors follow master throttle only when test mode is ON.</div>
+    </div>
+  </div>
+
   <h2 style="margin-top: 20px;">Calibrations</h2>
   <div class="container">
     <div class="control-section">
@@ -636,6 +691,9 @@ const char ROOT_HTML[] = R"rawliteral(
     const throttleValue = document.getElementById("throttleValue");
     const flightLockToggle = document.getElementById("flightLockToggle");
     const lockValue = document.getElementById("lockValue");
+    const testModeToggle = document.getElementById("testModeToggle");
+    const testModeValue = document.getElementById("testModeValue");
+    const motorToggleButtons = Array.from(document.querySelectorAll('.motor-toggle'));
     const decreaseThrottleBtn = document.getElementById("decreaseThrottle");
     const increaseThrottleBtn = document.getElementById("increaseThrottle");
     const flightStateDisplay = document.getElementById("flightState");
@@ -672,6 +730,8 @@ const char ROOT_HTML[] = R"rawliteral(
     };
 
     let isLocked = false;
+    let isTestMode = false;
+    const motorTestState = { fl: false, fr: false, bl: false, br: false };
     let pidLoaded = false;
     let flightState = 'INIT';
 
@@ -710,6 +770,12 @@ const char ROOT_HTML[] = R"rawliteral(
       calibrateMPUButton.disabled = disabled;
       calibrateESCButton.disabled = disabled;
 
+      testModeToggle.disabled = disabled;
+      motorToggleButtons.forEach(button => {
+        button.disabled = disabled;
+        button.classList.toggle('active', motorTestState[button.dataset.motor]);
+      });
+
       armButton.disabled = isLocked || flightState === 'ARMED' || flightState === 'LANDING';
       disarmButton.disabled = isLocked || flightState === 'DISARMED';
       landButton.disabled = isLocked || flightState === 'LANDING' || flightState === 'DISARMED' || flightState === 'CALIBRATING';
@@ -721,7 +787,8 @@ const char ROOT_HTML[] = R"rawliteral(
       if (isControlsDisabled()) return;
       masterThrottle.value = value;
       throttleValue.innerText = value;
-      fetch("/setThrottle?value=" + value);
+      const throttleEndpoint = isTestMode ? '/setTestThrottle' : '/setThrottle';
+      fetch(`${throttleEndpoint}?value=${value}`);
     }
 
     // Throttle Control
@@ -753,6 +820,45 @@ const char ROOT_HTML[] = R"rawliteral(
       lockValue.innerText = isLocked ? "ON" : "OFF";
       updateControlsState();
     }
+
+    function setTestMode(enabled) {
+      if (isControlsDisabled()) return;
+      isTestMode = enabled;
+      testModeToggle.checked = enabled;
+      testModeValue.innerText = enabled ? 'ON' : 'OFF';
+      motorToggleButtons.forEach(btn => {
+        btn.disabled = isControlsDisabled();
+        btn.classList.toggle('active', motorTestState[btn.dataset.motor]);
+      });
+
+      fetch(`/setTestMode?enabled=${enabled ? 1 : 0}`, { method: 'POST' })
+        .catch(() => { testModeValue.innerText = enabled ? 'ON*' : 'OFF*'; });
+    }
+
+    function sendMotorToggle(motorKey, enabled) {
+      if (isControlsDisabled()) return;
+      motorTestState[motorKey] = enabled;
+      motorToggleButtons.forEach(btn => {
+        if (btn.dataset.motor === motorKey) {
+          btn.classList.toggle('active', enabled);
+        }
+      });
+      fetch(`/setTestMotor?motor=${motorKey}&enabled=${enabled ? 1 : 0}`, { method: 'POST' });
+    }
+
+    testModeToggle.onchange = function () {
+      setTestMode(this.checked);
+    };
+
+    motorToggleButtons.forEach(button => {
+      button.onclick = function () {
+        if (isControlsDisabled()) return;
+        const motorKey = this.dataset.motor;
+        const nextState = !motorTestState[motorKey];
+        sendMotorToggle(motorKey, nextState);
+        this.classList.toggle('active', nextState);
+      };
+    });
 
     function setFlightState(newState) {
       flightState = newState;
@@ -786,6 +892,21 @@ const char ROOT_HTML[] = R"rawliteral(
           setFlightState(data.state);
           throttleValue.innerText = data.throttle;
           masterThrottle.value = data.throttle;
+          if (typeof data.testMode !== 'undefined') {
+            isTestMode = data.testMode;
+            testModeToggle.checked = isTestMode;
+            testModeValue.innerText = isTestMode ? 'ON' : 'OFF';
+          }
+          if (data.motorMask !== undefined) {
+            const mask = data.motorMask;
+            motorTestState.fl = !!(mask & 0x1);
+            motorTestState.fr = !!(mask & 0x2);
+            motorTestState.bl = !!(mask & 0x4);
+            motorTestState.br = !!(mask & 0x8);
+            motorToggleButtons.forEach(btn => {
+              btn.classList.toggle('active', motorTestState[btn.dataset.motor]);
+            });
+          }
         })
         .catch(() => {
           flightStatusNote.innerText = 'Unable to read flight status.';

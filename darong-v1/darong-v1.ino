@@ -140,6 +140,8 @@ bool escInitialized_ = false;
 WebServer server_(SystemConfig::WEB_SERVER_PORT);
 
 int baseThrottle = 0;
+bool testModeEnabled_ = false;
+bool motorTestMask_[4] = { false, false, false, false };
 bool eepromReady_ = false;
 
 enum class FlightState {
@@ -674,6 +676,22 @@ void setupWebServer(){
         }
     });
 
+    server_.on("/setTestThrottle", HTTP_GET, []() {
+        if (!testModeEnabled_) {
+            server_.send(409, "text/plain", "Test mode disabled");
+            return;
+        }
+
+        if (server_.hasArg("value")) {
+            int throttle = server_.arg("value").toInt();
+            baseThrottle = constrain(throttle, 0, FlightConfig::MAX_THROTTLE_PERCENT);
+            markCommandReceived();
+            server_.send(200, "text/plain", "OK");
+        } else {
+            server_.send(400, "text/plain", "Bad Request");
+        }
+    });
+
     server_.on("/setRoll", HTTP_GET, []() {
         if (server_.hasArg("value")) {
             float roll = server_.arg("value").toFloat();
@@ -707,10 +725,48 @@ void setupWebServer(){
         }
     });
 
+    server_.on("/setTestMode", HTTP_POST, []() {
+        if (server_.hasArg("enabled")) {
+            testModeEnabled_ = server_.arg("enabled").toInt() == 1;
+            markCommandReceived();
+            server_.send(200, "text/plain", testModeEnabled_ ? "ON" : "OFF");
+        } else {
+            server_.send(400, "text/plain", "Bad Request");
+        }
+    });
+
+    server_.on("/setTestMotor", HTTP_POST, []() {
+        if (server_.hasArg("motor") && server_.hasArg("enabled")) {
+            String motor = server_.arg("motor");
+            motor.toLowerCase();
+            bool enabled = server_.arg("enabled").toInt() == 1;
+            int index = -1;
+            if (motor == "fl") {
+                index = 0;
+            } else if (motor == "fr") {
+                index = 1;
+            } else if (motor == "bl") {
+                index = 2;
+            } else if (motor == "br") {
+                index = 3;
+            }
+
+            if (index >= 0) {
+                motorTestMask_[index] = enabled;
+                markCommandReceived();
+                server_.send(200, "text/plain", "OK");
+            } else {
+                server_.send(400, "text/plain", "Invalid motor");
+            }
+        } else {
+            server_.send(400, "text/plain", "Bad Request");
+        }
+    });
+
     server_.on("/getStatus", HTTP_GET, []() {
-        char response[128];
-        snprintf(response, sizeof(response), "{\"state\":\"%s\",\"throttle\":%d}",
-                 flightStateToString(flightState_), baseThrottle);
+        char response[196];
+        snprintf(response, sizeof(response), "{\"state\":\"%s\",\"throttle\":%d,\"testMode\":%s,\"motorMask\":%u}",
+                 flightStateToString(flightState_), baseThrottle, testModeEnabled_ ? "true" : "false", getMotorTestMask());
         server_.send(200, "application/json", response);
     });
 
@@ -955,7 +1011,12 @@ void pidControlTask(void* parameter) {
             case FlightState::ARMED:
             case FlightState::LANDING:
                 if (baseThrottle > FlightConfig::MIN_THROTTLE_PERCENT) {
-                    calculateMotorOutputs();
+                    if (testModeEnabled_) {
+                        resetIntegrators();
+                        applyTestMotorOutputs();
+                    } else {
+                        calculateMotorOutputs();
+                    }
                 } else {
                     resetIntegrators();
                     writeAllMotors(ESCConfig::MIN_THROTTLE_PULSE);
@@ -1072,6 +1133,30 @@ void writeMotorsAdjusted(int basePulse, int flAdjust, int frAdjust, int blAdjust
 
 int throttleToPulse(int throttlePercent) {
     return map(throttlePercent, 0, 100, ESCConfig::MIN_THROTTLE_PULSE, ESCConfig::MAX_THROTTLE_PULSE);
+}
+
+uint8_t getMotorTestMask() {
+    uint8_t mask = 0;
+    mask |= motorTestMask_[0] ? 0x1 : 0;
+    mask |= motorTestMask_[1] ? 0x2 : 0;
+    mask |= motorTestMask_[2] ? 0x4 : 0;
+    mask |= motorTestMask_[3] ? 0x8 : 0;
+    return mask;
+}
+
+void applyTestMotorOutputs() {
+    int activePulse = throttleToPulse(baseThrottle);
+    int idlePulse = ESCConfig::MIN_THROTTLE_PULSE;
+
+    currentPulseFL_ = motorTestMask_[0] ? activePulse : idlePulse;
+    currentPulseFR_ = motorTestMask_[1] ? activePulse : idlePulse;
+    currentPulseBL_ = motorTestMask_[2] ? activePulse : idlePulse;
+    currentPulseBR_ = motorTestMask_[3] ? activePulse : idlePulse;
+
+    escFL_F_.writeMicroseconds(currentPulseFL_);
+    escFR_R_.writeMicroseconds(currentPulseFR_);
+    escBL_L_.writeMicroseconds(currentPulseBL_);
+    escBR_B_.writeMicroseconds(currentPulseBR_);
 }
 
 bool updateMPU6050(float effectiveDt) {
