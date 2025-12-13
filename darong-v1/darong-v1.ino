@@ -336,8 +336,8 @@ void doSetup(){
     uint32_t watchdogTimeoutMs = max(1000, SystemConfig::WATCHDOG_TIMEOUT_MS);
     esp_task_wdt_config_t watchdogConfig = {
         .timeout_ms = watchdogTimeoutMs,
-        .trigger_panic = true,
         .idle_core_mask = (1 << portNUM_PROCESSORS) - 1,
+        .trigger_panic = true,
     };
 
     if (esp_task_wdt_init(&watchdogConfig) != ESP_OK) {
