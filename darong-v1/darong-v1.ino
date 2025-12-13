@@ -205,6 +205,18 @@ bool hasCommandTimedOut() {
     return (micros() - lastCommandMicros_) > (SystemConfig::COMMAND_TIMEOUT_MS * 1000UL);
 }
 
+void delayWithWdt(uint32_t ms) {
+    // const uint32_t maxSlice = SystemConfig::WATCHDOG_TIMEOUT_MS / 2;
+
+    // uint32_t remaining = ms;
+    // while (remaining > 0) {
+    //     uint32_t slice = (remaining < maxSlice) ? remaining : maxSlice;
+    //     esp_task_wdt_reset();
+        vTaskDelay(pdMS_TO_TICKS(ms));
+    //     remaining -= slice;
+    // }
+}
+
 const char* flightStateToString(FlightState state) {
     switch (state) {
         case FlightState::INIT: return "INIT";
@@ -397,6 +409,7 @@ void doSetup(){
     }
     Serial.println("Drone initialized successfully");
 }
+
 bool setupMPU6050(){
 
     if (!mpu_.begin()) {
@@ -502,13 +515,14 @@ void savePIDToEEPROM() {
 bool calibrateMPU6050(){
     Serial.println("Calibrating MPU6050...");
     Serial.println("Please keep the drone still and level!");
-    delay(2000);
+    delayWithWdt(2000);
 
     float accelX_sum = 0, accelY_sum = 0, accelZ_sum = 0;
     float gyroX_sum = 0, gyroY_sum = 0, gyroZ_sum = 0;
     unsigned long calibrationStart = millis();
 
     for (int i = 0; i < MPUConfig::CALIBRATION_SAMPLES; i++) {
+        Serial.printf("%d\n",i);
         sensors_event_t a, g, temp;
         if (!mpu_.getEvent(&a, &g, &temp)) {
             Serial.println("ERROR: Failed to read MPU6050 event during calibration.");
@@ -516,12 +530,13 @@ bool calibrateMPU6050(){
             return false;
         }
 
+ Serial.printf("yahan bhi aaya %d", i);
         if (millis() - calibrationStart > MPUConfig::CALIBRATION_TIMEOUT_MS) {
             Serial.println("ERROR: MPU6050 calibration timed out.");
             sensorHealthy_ = false;
             return false;
         }
-
+ Serial.printf("haa %d\n",i);
         accelX_sum += a.acceleration.x;
         accelY_sum += a.acceleration.y;
         accelZ_sum += a.acceleration.z;
@@ -529,7 +544,7 @@ bool calibrateMPU6050(){
         gyroY_sum += g.gyro.y;
         gyroZ_sum += g.gyro.z;
 
-        delay(2);
+        delayWithWdt(2);      // yield
     }
 
     // Calculate offsets
@@ -578,15 +593,15 @@ void setupESC(){
 void calibrateESC() {
     Serial.println("--------------------------------------------------");
     Serial.println("IMPORTANT: Make sure your ESCs are powered on now!");
-    delay(2000);
+    delayWithWdt(2000);      // yield
 
     Serial.println("\nStep 1: Sending maximum signal (2000) to all motors");
     writeAllMotors(ESCConfig::MAX_THROTTLE_PULSE);
-    delay(2000);
+    delayWithWdt(2000);      // yield
 
     Serial.println("\nStep 2: Sending minimum signal (1000) to all motors");
     writeAllMotors(ESCConfig::MIN_THROTTLE_PULSE);
-    delay(2000);
+    delayWithWdt(2000);      // yield
 
     Serial.println("\nESCs Calibration completed!");
 }
