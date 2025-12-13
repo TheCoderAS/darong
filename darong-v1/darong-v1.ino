@@ -322,7 +322,8 @@ void setup() {
     doSetup();
 }
 void loop() {
-
+    // Yield to the scheduler so the idle task can feed the watchdog.
+    vTaskDelay(pdMS_TO_TICKS(10));
 }
 
 
