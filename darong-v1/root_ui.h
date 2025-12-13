@@ -236,13 +236,15 @@ const char ROOT_HTML[] = R"rawliteral(
 
     .state-display {
       display: flex;
-      flex-direction: column;
+      flex-direction: row;
       align-items: center;
-      gap: 10px;
-      padding: 10px;
+      gap: 12px;
+      padding: 10px 14px;
       background: rgba(0, 0, 0, 0.4);
-      border-radius: 10px;
+      border-radius: 12px;
       border: 1px solid rgba(255, 255, 255, 0.15);
+      flex: 1;
+      min-width: 260px;
     }
 
     .state-chip {
@@ -257,6 +259,7 @@ const char ROOT_HTML[] = R"rawliteral(
     .flight-actions {
       display: flex;
       gap: 10px;
+      margin-left: auto;
     }
 
     .flight-action-btn {
@@ -284,15 +287,25 @@ const char ROOT_HTML[] = R"rawliteral(
     .status-note {
       font-size: 0.9em;
       color: #cccccc;
-      text-align: center;
+      text-align: left;
+      flex: 1;
+      min-width: 200px;
     }
 
     .status-container {
       justify-content: center;
+      width: 100%;
     }
 
     .status-section {
-      min-width: 240px;
+      min-width: 280px;
+      flex: 1;
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      gap: 16px;
+      width: 100%;
+      flex-wrap: wrap;
     }
 
     /* PID Control Styles */
@@ -576,6 +589,21 @@ const char ROOT_HTML[] = R"rawliteral(
     <div id="loadingMessage">Preparing interface...</div>
   </div>
   <h2>Quadcopter Control Panel</h2>
+  <h2 style="margin-top: 0;">Flight Status</h2>
+  <div class="container status-container" style="margin-top: 10px;">
+    <div class="control-section status-section">
+      <div class="section-title" style="margin-bottom: 0;">Flight State</div>
+      <div class="state-display">
+        <div class="state-chip" id="flightState">INIT</div>
+        <div class="status-note" id="flightStatusNote">Request arming to enable controls.</div>
+      </div>
+      <div class="flight-actions">
+        <button class="flight-action-btn" id="armButton">Arm</button>
+        <button class="flight-action-btn" id="disarmButton">Disarm</button>
+        <button class="flight-action-btn" id="landButton">Land</button>
+      </div>
+    </div>
+  </div>
   <div class="container">
     <!-- Throttle Control -->
     <div class="control-section">
@@ -625,22 +653,6 @@ const char ROOT_HTML[] = R"rawliteral(
         <span class="slider"></span>
       </label>
       <div class="value-display">Lock: <span id="lockValue">OFF</span></div>
-    </div>
-  </div>
-
-  <h2 style="margin-top: 20px;">Flight Status</h2>
-  <div class="container status-container">
-    <div class="control-section status-section">
-      <div class="section-title">Flight State</div>
-      <div class="state-display">
-        <div class="state-chip" id="flightState">INIT</div>
-        <div class="flight-actions">
-          <button class="flight-action-btn" id="armButton">Arm</button>
-          <button class="flight-action-btn" id="disarmButton">Disarm</button>
-          <button class="flight-action-btn" id="landButton">Land</button>
-        </div>
-        <div class="status-note" id="flightStatusNote">Request arming to enable controls.</div>
-      </div>
     </div>
   </div>
 
@@ -899,6 +911,13 @@ const char ROOT_HTML[] = R"rawliteral(
     }
 
     function setTestMode(enabled) {
+      if (!enabled) {
+        const throttleEndpoint = isTestMode ? '/setTestThrottle' : '/setThrottle';
+        masterThrottle.value = 0;
+        throttleValue.innerText = 0;
+        fetch(`${throttleEndpoint}?value=0`);
+      }
+
       if (isControlsDisabled()) return;
       isTestMode = enabled;
       testModeToggle.checked = enabled;
