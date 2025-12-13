@@ -15,6 +15,9 @@
 TaskHandle_t webServerTaskHandle_ = NULL;
 TaskHandle_t pidTaskHandle_ = NULL;
 
+volatile bool pidCalibrationPauseRequested_ = false;
+volatile bool pidCalibrationPaused_ = false;
+
 bool unregisterCurrentTaskFromWatchdog() {
     esp_err_t err = esp_task_wdt_delete(NULL);
     if (err != ESP_OK) {
@@ -25,8 +28,22 @@ bool unregisterCurrentTaskFromWatchdog() {
 }
 
 bool pauseWatchdogForCalibration() {
+    if (pidTaskHandle_ != NULL) {
+        pidCalibrationPauseRequested_ = true;
+        const uint32_t start = millis();
+        while (!pidCalibrationPaused_) {
+            if (millis() - start > SystemConfig::WATCHDOG_TIMEOUT_MS) {
+                Serial.println("ERROR: PID task did not pause for calibration in time.");
+                pidCalibrationPauseRequested_ = false;
+                return false;
+            }
+            vTaskDelay(pdMS_TO_TICKS(1));
+        }
+    }
+
     if (!unregisterCurrentTaskFromWatchdog()) {
         Serial.println("ERROR: Cannot pause watchdog for calibration.");
+        pidCalibrationPauseRequested_ = false;
         return false;
     }
 
@@ -35,9 +52,9 @@ bool pauseWatchdogForCalibration() {
             Serial.println("ERROR: Cannot pause PID task watchdog for calibration.");
             // Attempt to restore web server watchdog before returning
             registerCurrentTaskWithWatchdog();
+            pidCalibrationPauseRequested_ = false;
             return false;
         }
-        vTaskSuspend(pidTaskHandle_);
     }
 
     return true;
@@ -47,7 +64,6 @@ bool resumeWatchdogAfterCalibration() {
     bool success = true;
 
     if (pidTaskHandle_ != NULL) {
-        vTaskResume(pidTaskHandle_);
         if (!registerPIDTaskWithWatchdog()) {
             Serial.println("ERROR: Failed to re-register PID task with watchdog after calibration.");
             success = false;
@@ -57,6 +73,17 @@ bool resumeWatchdogAfterCalibration() {
     if (!registerCurrentTaskWithWatchdog()) {
         Serial.println("ERROR: Failed to re-register web server task with watchdog after calibration.");
         success = false;
+    }
+
+    pidCalibrationPauseRequested_ = false;
+    const uint32_t resumeStart = millis();
+    while (pidCalibrationPaused_) {
+        if (millis() - resumeStart > SystemConfig::WATCHDOG_TIMEOUT_MS) {
+            Serial.println("ERROR: PID task did not resume after calibration.");
+            success = false;
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(1));
     }
 
     return success;
@@ -894,6 +921,18 @@ void pidControlTask(void* parameter) {
     TickType_t lastWakeTime = xTaskGetTickCount();  // Initialize once
     esp_task_wdt_add(NULL);
     while (true) {
+        if (pidCalibrationPauseRequested_) {
+            pidCalibrationPaused_ = true;
+            while (pidCalibrationPauseRequested_) {
+                esp_task_wdt_reset();
+                vTaskDelay(pdMS_TO_TICKS(5));
+            }
+            pidCalibrationPaused_ = false;
+            previousMicros_ = micros();
+            vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(SystemConfig::PID_UPDATE_INTERVAL_MS));
+            continue;
+        }
+
         unsigned long currentMicros = micros();
         dt_ = (float)(currentMicros - previousMicros_) / 1000000.0;
         dt_ = max(dt_, PIDConfig::MIN_DT_SECONDS);
