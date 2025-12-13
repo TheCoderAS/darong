@@ -16,13 +16,19 @@ const char ROOT_HTML[] = R"rawliteral(
       padding: 0;
     }
 
+    :root {
+      --gap-lg: 24px;
+      --gap-md: 16px;
+    }
+
     body {
       font-family: 'Segoe UI', Arial, sans-serif;
       min-height: 100vh;
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: center;
+      justify-content: flex-start;
+      gap: var(--gap-lg);
       padding: 20px;
       background: linear-gradient(135deg, #000000 0%, #1a1a1a 50%, #2d2d2d 100%);
       color: #ffffff;
@@ -42,14 +48,24 @@ const char ROOT_HTML[] = R"rawliteral(
       flex-direction: row;
       align-items: center;
       justify-content: center;
-      gap: 20px;
+      flex-wrap: wrap;
+      gap: clamp(12px, 2vw, 24px);
       padding: 20px;
       background: rgba(0, 0, 0, 0.7);
       border-radius: 20px;
       box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-      width: 95%;
+      width: 100%;
       max-width: 1200px;
       border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .page-shell {
+      width: 100%;
+      max-width: 1280px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: var(--gap-lg);
     }
 
     .loading-overlay {
@@ -93,9 +109,11 @@ const char ROOT_HTML[] = R"rawliteral(
       padding: 15px;
       background: rgba(0, 0, 0, 0.5);
       border-radius: 15px;
-      min-width: 180px;
+      min-width: 200px;
+      flex: 1 1 240px;
       border: 1px solid rgba(255, 255, 255, 0.1);
       transition: transform 0.3s ease, box-shadow 0.3s ease;
+      gap: var(--gap-md);
     }
 
     .control-section:hover {
@@ -128,7 +146,7 @@ const char ROOT_HTML[] = R"rawliteral(
     .motor-toggle-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(120px, 1fr));
-      gap: 10px;
+      gap: 12px;
       width: 100%;
       margin-top: 10px;
     }
@@ -588,23 +606,22 @@ const char ROOT_HTML[] = R"rawliteral(
     <div class="loader" aria-hidden="true"></div>
     <div id="loadingMessage">Preparing interface...</div>
   </div>
-  <h2>Quadcopter Control Panel</h2>
-  <h2 style="margin-top: 0;">Flight Status</h2>
-  <div class="container status-container" style="margin-top: 10px;">
-    <div class="control-section status-section">
-      <div class="section-title" style="margin-bottom: 0;">Flight State</div>
-      <div class="state-display">
-        <div class="state-chip" id="flightState">INIT</div>
-        <div class="status-note" id="flightStatusNote">Request arming to enable controls.</div>
-      </div>
-      <div class="flight-actions">
-        <button class="flight-action-btn" id="armButton">Arm</button>
-        <button class="flight-action-btn" id="disarmButton">Disarm</button>
-        <button class="flight-action-btn" id="landButton">Land</button>
+  <div class="page-shell">
+    <h2>Quadcopter Control Panel</h2>
+    <div class="container status-container" style="margin-top: 10px;">
+      <div class="control-section status-section">
+        <div class="state-display" aria-label="Flight state">
+          <div class="state-chip" id="flightState">INIT</div>
+          <div class="status-note" id="flightStatusNote">Request arming to enable controls.</div>
+        </div>
+        <div class="flight-actions">
+          <button class="flight-action-btn" id="armButton">Arm</button>
+          <button class="flight-action-btn" id="disarmButton">Disarm</button>
+          <button class="flight-action-btn" id="landButton">Land</button>
+        </div>
       </div>
     </div>
-  </div>
-  <div class="container">
+    <div class="container">
     <!-- Throttle Control -->
     <div class="control-section">
       <div class="section-title">Throttle</div>
@@ -752,6 +769,7 @@ const char ROOT_HTML[] = R"rawliteral(
     <div id="pidStatus" class="pid-status"></div>
   </div>
   <div id="logContainer" style="margin-top: 20px; height: 200px; overflow: auto;">
+  </div>
   </div>
   <script>
     // Initialize elements
