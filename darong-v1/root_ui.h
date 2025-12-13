@@ -217,6 +217,14 @@ const char ROOT_HTML[] = R"rawliteral(
       text-align: center;
     }
 
+    .status-container {
+      justify-content: center;
+    }
+
+    .status-section {
+      min-width: 240px;
+    }
+
     /* PID Control Styles */
     .pid-form {
       display: grid;
@@ -490,19 +498,6 @@ const char ROOT_HTML[] = R"rawliteral(
   <div class="container">
     <!-- Throttle Control -->
     <div class="control-section">
-      <div class="section-title">Flight State</div>
-      <div class="state-display">
-        <div class="state-chip" id="flightState">INIT</div>
-        <div class="flight-actions">
-          <button class="flight-action-btn" id="armButton">Arm</button>
-          <button class="flight-action-btn" id="disarmButton">Disarm</button>
-          <button class="flight-action-btn" id="landButton">Land</button>
-        </div>
-        <div class="status-note" id="flightStatusNote">Request arming to enable controls.</div>
-      </div>
-    </div>
-
-    <div class="control-section">
       <div class="section-title">Throttle</div>
       <div class="throttle-control">
         <input type="range" min="0" max="100" value="0" id="masterThrottle">
@@ -549,6 +544,22 @@ const char ROOT_HTML[] = R"rawliteral(
         <span class="slider"></span>
       </label>
       <div class="value-display">Lock: <span id="lockValue">OFF</span></div>
+    </div>
+  </div>
+
+  <h2 style="margin-top: 20px;">Flight Status</h2>
+  <div class="container status-container">
+    <div class="control-section status-section">
+      <div class="section-title">Flight State</div>
+      <div class="state-display">
+        <div class="state-chip" id="flightState">INIT</div>
+        <div class="flight-actions">
+          <button class="flight-action-btn" id="armButton">Arm</button>
+          <button class="flight-action-btn" id="disarmButton">Disarm</button>
+          <button class="flight-action-btn" id="landButton">Land</button>
+        </div>
+        <div class="status-note" id="flightStatusNote">Request arming to enable controls.</div>
+      </div>
     </div>
   </div>
 
