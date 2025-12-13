@@ -19,8 +19,8 @@ struct SystemConfig {
     static constexpr int WEB_SERVER_UPDATE_INTERVAL_MS = 5;  // Faster web server response
 
     // System Stability Configuration
-    static constexpr int MAX_TASK_EXECUTION_TIME_MS = 25;  // Max time for PID task
-    static constexpr int WEB_SERVER_TIMEOUT_MS = 100;      // Max time for web server cycle
+    static constexpr int MAX_TASK_EXECUTION_TIME_MS = 100;  // Max time for PID task (50)
+    static constexpr int WEB_SERVER_TIMEOUT_MS = 300;      // Max time for web server cycle (100)
     static constexpr int WATCHDOG_TIMEOUT_MS = 100;       // Watchdog timeout
     static constexpr int COMMAND_TIMEOUT_MS = 500;        // Failsafe timeout for incoming commands
 };
@@ -30,7 +30,7 @@ struct CalibrationConfig {
     static constexpr int ESC_CALIBRATION_DELAY_MS = 2000;
     static constexpr bool ESC_CALIBRATION = false;
     static constexpr bool MPU6050_CALIBRATION = false;
-    static constexpr bool ENABLE_DEBUG_PRINT = false;
+    static constexpr bool ENABLE_DEBUG_PRINT = true;
     static constexpr uint32_t EEPROM_MAGIC = 0x4D505543; // 'MPUC'
     static constexpr size_t EEPROM_SIZE = 256;
 };

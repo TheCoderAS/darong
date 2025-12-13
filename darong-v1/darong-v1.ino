@@ -15,9 +15,6 @@
 TaskHandle_t webServerTaskHandle_ = NULL;
 TaskHandle_t pidTaskHandle_ = NULL;
 
-volatile bool pidCalibrationPauseRequested_ = false;
-volatile bool pidCalibrationPaused_ = false;
-
 bool unregisterCurrentTaskFromWatchdog() {
     esp_err_t err = esp_task_wdt_delete(NULL);
     if (err != ESP_OK) {
@@ -28,22 +25,8 @@ bool unregisterCurrentTaskFromWatchdog() {
 }
 
 bool pauseWatchdogForCalibration() {
-    if (pidTaskHandle_ != NULL) {
-        pidCalibrationPauseRequested_ = true;
-        const uint32_t start = millis();
-        while (!pidCalibrationPaused_) {
-            if (millis() - start > SystemConfig::WATCHDOG_TIMEOUT_MS) {
-                Serial.println("ERROR: PID task did not pause for calibration in time.");
-                pidCalibrationPauseRequested_ = false;
-                return false;
-            }
-            vTaskDelay(pdMS_TO_TICKS(1));
-        }
-    }
-
     if (!unregisterCurrentTaskFromWatchdog()) {
         Serial.println("ERROR: Cannot pause watchdog for calibration.");
-        pidCalibrationPauseRequested_ = false;
         return false;
     }
 
@@ -52,9 +35,9 @@ bool pauseWatchdogForCalibration() {
             Serial.println("ERROR: Cannot pause PID task watchdog for calibration.");
             // Attempt to restore web server watchdog before returning
             registerCurrentTaskWithWatchdog();
-            pidCalibrationPauseRequested_ = false;
             return false;
         }
+        vTaskSuspend(pidTaskHandle_);
     }
 
     return true;
@@ -64,6 +47,7 @@ bool resumeWatchdogAfterCalibration() {
     bool success = true;
 
     if (pidTaskHandle_ != NULL) {
+        vTaskResume(pidTaskHandle_);
         if (!registerPIDTaskWithWatchdog()) {
             Serial.println("ERROR: Failed to re-register PID task with watchdog after calibration.");
             success = false;
@@ -73,17 +57,6 @@ bool resumeWatchdogAfterCalibration() {
     if (!registerCurrentTaskWithWatchdog()) {
         Serial.println("ERROR: Failed to re-register web server task with watchdog after calibration.");
         success = false;
-    }
-
-    pidCalibrationPauseRequested_ = false;
-    const uint32_t resumeStart = millis();
-    while (pidCalibrationPaused_) {
-        if (millis() - resumeStart > SystemConfig::WATCHDOG_TIMEOUT_MS) {
-            Serial.println("ERROR: PID task did not resume after calibration.");
-            success = false;
-            break;
-        }
-        vTaskDelay(pdMS_TO_TICKS(1));
     }
 
     return success;
@@ -140,6 +113,8 @@ bool escInitialized_ = false;
 WebServer server_(SystemConfig::WEB_SERVER_PORT);
 
 int baseThrottle = 0;
+bool testModeEnabled_ = false;
+bool motorTestMask_[4] = { false, false, false, false };
 bool eepromReady_ = false;
 
 enum class FlightState {
@@ -403,7 +378,7 @@ void doSetup(){
     }
 
     bool calibrationLoaded = eepromReady_ && loadCalibrationFromEEPROM();
-    if (!calibrationLoaded) {
+    if (!calibrationLoaded || CalibrationConfig::MPU6050_CALIBRATION) {
         bool calibrationSuccess = calibrateMPU6050();
         if (calibrationSuccess) {
             saveCalibrationToEEPROM();
@@ -549,7 +524,7 @@ bool calibrateMPU6050(){
     unsigned long calibrationStart = millis();
 
     for (int i = 0; i < MPUConfig::CALIBRATION_SAMPLES; i++) {
-        Serial.printf("%d\n",i);
+        // Serial.printf("%d ",i);
         sensors_event_t a, g, temp;
         if (!mpu_.getEvent(&a, &g, &temp)) {
             Serial.println("ERROR: Failed to read MPU6050 event during calibration.");
@@ -557,13 +532,11 @@ bool calibrateMPU6050(){
             return false;
         }
 
- Serial.printf("yahan bhi aaya %d", i);
         if (millis() - calibrationStart > MPUConfig::CALIBRATION_TIMEOUT_MS) {
             Serial.println("ERROR: MPU6050 calibration timed out.");
             sensorHealthy_ = false;
             return false;
         }
- Serial.printf("haa %d\n",i);
         accelX_sum += a.acceleration.x;
         accelY_sum += a.acceleration.y;
         accelZ_sum += a.acceleration.z;
@@ -620,15 +593,15 @@ void setupESC(){
 void calibrateESC() {
     Serial.println("--------------------------------------------------");
     Serial.println("IMPORTANT: Make sure your ESCs are powered on now!");
-    delayWithWdt(2000);      // yield
+    delayWithWdt(CalibrationConfig::ESC_CALIBRATION_DELAY_MS);      // yield
 
     Serial.println("\nStep 1: Sending maximum signal (2000) to all motors");
     writeAllMotors(ESCConfig::MAX_THROTTLE_PULSE);
-    delayWithWdt(2000);      // yield
+    delayWithWdt(CalibrationConfig::ESC_CALIBRATION_DELAY_MS);      // yield
 
     Serial.println("\nStep 2: Sending minimum signal (1000) to all motors");
     writeAllMotors(ESCConfig::MIN_THROTTLE_PULSE);
-    delayWithWdt(2000);      // yield
+    delayWithWdt(CalibrationConfig::ESC_CALIBRATION_DELAY_MS);      // yield
 
     Serial.println("\nESCs Calibration completed!");
 }
@@ -664,6 +637,27 @@ void setupWebServer(){
     });
 
     server_.on("/setThrottle", HTTP_GET, []() {
+        if (testModeEnabled_) {
+            server_.send(409, "text/plain", "Test mode active");
+            return;
+        }
+
+        if (server_.hasArg("value")) {
+            int throttle = server_.arg("value").toInt();
+            baseThrottle = constrain(throttle, 0, FlightConfig::MAX_THROTTLE_PERCENT);
+            markCommandReceived();
+            server_.send(200, "text/plain", "OK");
+        } else {
+            server_.send(400, "text/plain", "Bad Request");
+        }
+    });
+
+    server_.on("/setTestThrottle", HTTP_GET, []() {
+        if (!testModeEnabled_) {
+            server_.send(409, "text/plain", "Test mode disabled");
+            return;
+        }
+
         if (server_.hasArg("value")) {
             int throttle = server_.arg("value").toInt();
             baseThrottle = constrain(throttle, 0, FlightConfig::MAX_THROTTLE_PERCENT);
@@ -707,10 +701,48 @@ void setupWebServer(){
         }
     });
 
+    server_.on("/setTestMode", HTTP_POST, []() {
+        if (server_.hasArg("enabled")) {
+            testModeEnabled_ = server_.arg("enabled").toInt() == 1;
+            markCommandReceived();
+            server_.send(200, "text/plain", testModeEnabled_ ? "ON" : "OFF");
+        } else {
+            server_.send(400, "text/plain", "Bad Request");
+        }
+    });
+
+    server_.on("/setTestMotor", HTTP_POST, []() {
+        if (server_.hasArg("motor") && server_.hasArg("enabled")) {
+            String motor = server_.arg("motor");
+            motor.toLowerCase();
+            bool enabled = server_.arg("enabled").toInt() == 1;
+            int index = -1;
+            if (motor == "fl") {
+                index = 0;
+            } else if (motor == "fr") {
+                index = 1;
+            } else if (motor == "bl") {
+                index = 2;
+            } else if (motor == "br") {
+                index = 3;
+            }
+
+            if (index >= 0) {
+                motorTestMask_[index] = enabled;
+                markCommandReceived();
+                server_.send(200, "text/plain", "OK");
+            } else {
+                server_.send(400, "text/plain", "Invalid motor");
+            }
+        } else {
+            server_.send(400, "text/plain", "Bad Request");
+        }
+    });
+
     server_.on("/getStatus", HTTP_GET, []() {
-        char response[128];
-        snprintf(response, sizeof(response), "{\"state\":\"%s\",\"throttle\":%d}",
-                 flightStateToString(flightState_), baseThrottle);
+        char response[196];
+        snprintf(response, sizeof(response), "{\"state\":\"%s\",\"throttle\":%d,\"testMode\":%s,\"motorMask\":%u}",
+                 flightStateToString(flightState_), baseThrottle, testModeEnabled_ ? "true" : "false", getMotorTestMask());
         server_.send(200, "application/json", response);
     });
 
@@ -917,22 +949,12 @@ bool runPIDTask(){
     Serial.println("PID control task created successfully");
     return true;
 }
+
+
 void pidControlTask(void* parameter) {
     TickType_t lastWakeTime = xTaskGetTickCount();  // Initialize once
     esp_task_wdt_add(NULL);
     while (true) {
-        if (pidCalibrationPauseRequested_) {
-            pidCalibrationPaused_ = true;
-            while (pidCalibrationPauseRequested_) {
-                esp_task_wdt_reset();
-                vTaskDelay(pdMS_TO_TICKS(5));
-            }
-            pidCalibrationPaused_ = false;
-            previousMicros_ = micros();
-            vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(SystemConfig::PID_UPDATE_INTERVAL_MS));
-            continue;
-        }
-
         unsigned long currentMicros = micros();
         dt_ = (float)(currentMicros - previousMicros_) / 1000000.0;
         dt_ = max(dt_, PIDConfig::MIN_DT_SECONDS);
@@ -955,7 +977,12 @@ void pidControlTask(void* parameter) {
             case FlightState::ARMED:
             case FlightState::LANDING:
                 if (baseThrottle > FlightConfig::MIN_THROTTLE_PERCENT) {
-                    calculateMotorOutputs();
+                    if (testModeEnabled_) {
+                        resetIntegrators();
+                        applyTestMotorOutputs();
+                    } else {
+                        calculateMotorOutputs();
+                    }
                 } else {
                     resetIntegrators();
                     writeAllMotors(ESCConfig::MIN_THROTTLE_PULSE);
@@ -1072,6 +1099,30 @@ void writeMotorsAdjusted(int basePulse, int flAdjust, int frAdjust, int blAdjust
 
 int throttleToPulse(int throttlePercent) {
     return map(throttlePercent, 0, 100, ESCConfig::MIN_THROTTLE_PULSE, ESCConfig::MAX_THROTTLE_PULSE);
+}
+
+uint8_t getMotorTestMask() {
+    uint8_t mask = 0;
+    mask |= motorTestMask_[0] ? 0x1 : 0;
+    mask |= motorTestMask_[1] ? 0x2 : 0;
+    mask |= motorTestMask_[2] ? 0x4 : 0;
+    mask |= motorTestMask_[3] ? 0x8 : 0;
+    return mask;
+}
+
+void applyTestMotorOutputs() {
+    int activePulse = throttleToPulse(baseThrottle);
+    int idlePulse = ESCConfig::MIN_THROTTLE_PULSE;
+
+    currentPulseFL_ = motorTestMask_[0] ? activePulse : idlePulse;
+    currentPulseFR_ = motorTestMask_[1] ? activePulse : idlePulse;
+    currentPulseBL_ = motorTestMask_[2] ? activePulse : idlePulse;
+    currentPulseBR_ = motorTestMask_[3] ? activePulse : idlePulse;
+
+    escFL_F_.writeMicroseconds(currentPulseFL_);
+    escFR_R_.writeMicroseconds(currentPulseFR_);
+    escBL_L_.writeMicroseconds(currentPulseBL_);
+    escBR_B_.writeMicroseconds(currentPulseBR_);
 }
 
 bool updateMPU6050(float effectiveDt) {
