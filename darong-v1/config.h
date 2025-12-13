@@ -9,7 +9,7 @@ struct SystemConfig {
     static constexpr int PID_TASK_STACK_SIZE = 8192;
     static constexpr int PID_TASK_PRIORITY = 3;  // Highest priority task
     static constexpr int PID_TASK_CORE = 0;      // Run on Core 0
-    static constexpr int PID_UPDATE_INTERVAL_MS = 4; // 200Hz update rate
+    static constexpr uint32_t PID_UPDATE_INTERVAL_MS = 4; // 200Hz update rate
 
     // Web Server Task Configuration
     static constexpr int WEB_SERVER_PORT = 80;
@@ -19,8 +19,8 @@ struct SystemConfig {
     static constexpr int WEB_SERVER_UPDATE_INTERVAL_MS = 5;  // Faster web server response
 
     // System Stability Configuration
-    static constexpr int MAX_TASK_EXECUTION_TIME_MS = 8;  // Max time for PID task
-    static constexpr int WEB_SERVER_TIMEOUT_MS = 50;      // Max time for web server cycle
+    static constexpr int MAX_TASK_EXECUTION_TIME_MS = 25;  // Max time for PID task
+    static constexpr int WEB_SERVER_TIMEOUT_MS = 100;      // Max time for web server cycle
     static constexpr int WATCHDOG_TIMEOUT_MS = 100;       // Watchdog timeout
     static constexpr int COMMAND_TIMEOUT_MS = 500;        // Failsafe timeout for incoming commands
 };
@@ -30,7 +30,7 @@ struct CalibrationConfig {
     static constexpr int ESC_CALIBRATION_DELAY_MS = 2000;
     static constexpr bool ESC_CALIBRATION = false;
     static constexpr bool MPU6050_CALIBRATION = false;
-    static constexpr bool ENABLE_DEBUG_PRINT = true;
+    static constexpr bool ENABLE_DEBUG_PRINT = false;
     static constexpr uint32_t EEPROM_MAGIC = 0x4D505543; // 'MPUC'
     static constexpr size_t EEPROM_SIZE = 256;
 };

@@ -241,7 +241,7 @@ void applyMotorOutputsForState() {
             if (escInitialized_) {
                 writeAllMotors(ESCConfig::MIN_THROTTLE_PULSE);
             }
-            Serial.println("Failsafe: Motors set to minimum pulse.");
+            // Serial.println("Failsafe: Motors set to minimum pulse.");
             break;
         case FlightState::LANDING:
             baseThrottle = (int)FlightConfig::MIN_THROTTLE_PERCENT;
@@ -809,7 +809,8 @@ void webServerTask(void* parameter) {
         server_.handleClient();
         uint32_t loopElapsed = millis() - loopStartMs;
         if (loopElapsed > SystemConfig::WEB_SERVER_TIMEOUT_MS) {
-            Serial.println("Warning: Web server task exceeded execution budget");
+            Serial.print("Warning: Web server task exceeded execution budget: ");
+            Serial.println(loopElapsed);
             triggerFailsafe("Failsafe: Web server task exceeded execution budget");
         }
         esp_task_wdt_reset();
@@ -854,17 +855,16 @@ void pidControlTask(void* parameter) {
     TickType_t lastWakeTime = xTaskGetTickCount();  // Initialize once
     esp_task_wdt_add(NULL);
     while (true) {
-        unsigned long loopStartMs = millis();
         unsigned long currentMicros = micros();
         dt_ = (float)(currentMicros - previousMicros_) / 1000000.0;
         dt_ = max(dt_, PIDConfig::MIN_DT_SECONDS);
         previousMicros_ = currentMicros;
 
-        if ((flightState_ == FlightState::ARMED || flightState_ == FlightState::LANDING) && hasCommandTimedOut()) {
-            triggerFailsafe("Failsafe: Command timeout.");
-            vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(SystemConfig::PID_UPDATE_INTERVAL_MS));
-            continue;
-        }
+        // if ((flightState_ == FlightState::ARMED || flightState_ == FlightState::LANDING) && hasCommandTimedOut()) {
+        //     triggerFailsafe("Failsafe: Command timeout.");
+        //     vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(SystemConfig::PID_UPDATE_INTERVAL_MS));
+        //     continue;
+        // }
 
         sensorHealthy_ = updateMPU6050(dt_);
         if (!sensorHealthy_) {
@@ -897,8 +897,11 @@ void pidControlTask(void* parameter) {
             lastDebugPrint_ = currentMicros;
         }
 
-        uint32_t loopElapsed = millis() - loopStartMs;
-        if (loopElapsed > SystemConfig::MAX_TASK_EXECUTION_TIME_MS) {
+        float loopElapsed =(float) (micros() - currentMicros)/1000.0;
+
+        // Serial.printf("dt(ms): %.2f, loop(ms): %.2f\n", dt_*1000.0f, loopElapsed);
+
+        if (loopElapsed > (float) SystemConfig::MAX_TASK_EXECUTION_TIME_MS) {
             Serial.println("Warning: PID task exceeded execution budget");
             triggerFailsafe("Failsafe: PID task exceeded execution budget");
         }
