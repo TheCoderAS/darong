@@ -124,6 +124,9 @@ enum class FlightState {
     LANDING
 };
 
+const char* flightStateToString(FlightState state);
+void setFlightState(FlightState newState, const char* reason);
+
 FlightState flightState_ = FlightState::INIT;
 
 struct CalibrationData {
