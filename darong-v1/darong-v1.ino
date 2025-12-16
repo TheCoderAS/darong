@@ -1045,8 +1045,7 @@ void calculateMotorOutputs() {
     // Calculate PID outputs
     float rollOutput = computeRoll();
     float pitchOutput = computePitch();
-    // Yaw corrections temporarily disabled
-    float yawOutput = 0.0f;
+    float yawOutput = computeYaw();
 
     int fl_f_Adjust = -pitchOutput + rollOutput + yawOutput;  // Motor 1 (Front Left)
     int fr_r_Adjust = -pitchOutput - rollOutput - yawOutput;  // Motor 2 (Front Right)
