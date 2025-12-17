@@ -1065,13 +1065,13 @@ float normalizeAngleDegrees(float angle) {
     return angle - 180.0f;
 }
 
-float computePIDAxis(float target, float current, float& integralTerm, float& prevError, float kp, float ki, float kd, bool wrapAngle) {
+float computePIDAxis(float target, float current, float& integralTerm, float& prevError, float kp, float ki, float kd, bool wrapAngle, float outputLimit = PIDConfig::MAX_PID_OUTPUT) {
     float error = wrapAngle ? normalizeAngleDegrees(target - current) : (target - current);
 
     float pTerm = kp * error;
     float iTerm = constrain(integralTerm + (ki * (error + prevError) * (dt_ / 2.0f)), -PIDConfig::MAX_INTEGRAL, PIDConfig::MAX_INTEGRAL);
     float dTerm = kd * (error - prevError) / dt_;
-    float pidOutput = constrain(pTerm + iTerm + dTerm, -PIDConfig::MAX_PID_OUTPUT, PIDConfig::MAX_PID_OUTPUT);
+    float pidOutput = constrain(pTerm + iTerm + dTerm, -outputLimit, outputLimit);
 
     prevError = error;
     integralTerm = iTerm;
@@ -1088,7 +1088,7 @@ float computePitch() {
 }
 
 float computeYaw() {
-    return computePIDAxis(targetYaw_, yaw_, integralYaw_, prevErrorYaw_, Kp_yaw_, Ki_yaw_, Kd_yaw_, true);
+    return computePIDAxis(targetYaw_, yaw_, integralYaw_, prevErrorYaw_, Kp_yaw_, Ki_yaw_, Kd_yaw_, true, PIDConfig::MAX_YAW_PID_OUTPUT);
 }
 
 void writeAllMotors(int pulse) {
