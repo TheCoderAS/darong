@@ -79,9 +79,10 @@ struct PIDConfig {
     static constexpr float Kd_yaw = 0.0;
 
     // PID Limits
-    static constexpr float MAX_INTEGRAL = 400.0;
-    static constexpr float MAX_PID_OUTPUT = 400.0;
-    static constexpr float MIN_PID_OUTPUT = -400.0;
+    static constexpr float MAX_INTEGRAL = 200.0;
+    static constexpr float MAX_PID_OUTPUT = 200.0;
+    static constexpr float MIN_PID_OUTPUT = -200.0;
+    static constexpr float MAX_YAW_PID_OUTPUT = 20.0;
     static constexpr float MIN_DT_SECONDS = 0.001f; // Minimum dt used in PID math
 };
 
