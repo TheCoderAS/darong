@@ -1057,44 +1057,38 @@ void calculateMotorOutputs() {
     int basePulse = throttleToPulse(baseThrottle);
     writeMotorsAdjusted(basePulse, fl_f_Adjust, fr_r_Adjust, bl_l_Adjust, br_b_Adjust);
 }
-float computeRoll() {    
-    float error = targetRoll_ - roll_;
+float normalizeAngleDegrees(float angle) {
+    angle = fmodf(angle + 180.0f, 360.0f);
+    if (angle < 0.0f) {
+        angle += 360.0f;
+    }
+    return angle - 180.0f;
+}
 
-    float PTerm = Kp_roll_ * error;
-    float ITerm = constrain(integralRoll_+(Ki_roll_*(error+prevErrorRoll_) * (dt_/2)), -PIDConfig::MAX_INTEGRAL, PIDConfig::MAX_INTEGRAL);
-    float DTerm = Kd_roll_ * (error - prevErrorRoll_) / dt_;
-    float pidOutput = constrain(PTerm + ITerm + DTerm, -PIDConfig::MAX_PID_OUTPUT, PIDConfig::MAX_PID_OUTPUT);
-    prevErrorRoll_ = error;
-    integralRoll_ = ITerm;
+float computePIDAxis(float target, float current, float& integralTerm, float& prevError, float kp, float ki, float kd, bool wrapAngle) {
+    float error = wrapAngle ? normalizeAngleDegrees(target - current) : (target - current);
+
+    float pTerm = kp * error;
+    float iTerm = constrain(integralTerm + (ki * (error + prevError) * (dt_ / 2.0f)), -PIDConfig::MAX_INTEGRAL, PIDConfig::MAX_INTEGRAL);
+    float dTerm = kd * (error - prevError) / dt_;
+    float pidOutput = constrain(pTerm + iTerm + dTerm, -PIDConfig::MAX_PID_OUTPUT, PIDConfig::MAX_PID_OUTPUT);
+
+    prevError = error;
+    integralTerm = iTerm;
 
     return pidOutput;
+}
+
+float computeRoll() {
+    return computePIDAxis(targetRoll_, roll_, integralRoll_, prevErrorRoll_, Kp_roll_, Ki_roll_, Kd_roll_, false);
 }
 
 float computePitch() {
-    float error = targetPitch_ - pitch_;
-
-    float PTerm = Kp_pitch_ * error;
-    float ITerm = constrain(integralPitch_+(Ki_pitch_*(error+prevErrorPitch_) * (dt_/2)), -PIDConfig::MAX_INTEGRAL, PIDConfig::MAX_INTEGRAL);
-    float DTerm = Kd_pitch_ * (error - prevErrorPitch_) / dt_;
-    float pidOutput = constrain(PTerm + ITerm + DTerm, -PIDConfig::MAX_PID_OUTPUT, PIDConfig::MAX_PID_OUTPUT);
-
-    prevErrorPitch_ = error;
-    integralPitch_ = ITerm;
-
-    return pidOutput;
+    return computePIDAxis(targetPitch_, pitch_, integralPitch_, prevErrorPitch_, Kp_pitch_, Ki_pitch_, Kd_pitch_, false);
 }
 
 float computeYaw() {
-    float error = targetYaw_ - yaw_;
-    float PTerm = Kp_yaw_ * error;
-    float ITerm = constrain(integralYaw_+(Ki_yaw_*(error+prevErrorYaw_) * (dt_/2)), -PIDConfig::MAX_INTEGRAL, PIDConfig::MAX_INTEGRAL);
-    float DTerm = Kd_yaw_ * (error - prevErrorYaw_) / dt_;
-    float pidOutput = constrain(PTerm + ITerm + DTerm, -PIDConfig::MAX_PID_OUTPUT, PIDConfig::MAX_PID_OUTPUT);
-
-    prevErrorYaw_ = error;
-    integralYaw_ = ITerm;
-
-    return pidOutput;
+    return computePIDAxis(targetYaw_, yaw_, integralYaw_, prevErrorYaw_, Kp_yaw_, Ki_yaw_, Kd_yaw_, true);
 }
 
 void writeAllMotors(int pulse) {
