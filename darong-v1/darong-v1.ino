@@ -1042,10 +1042,18 @@ void pidControlTask(void* parameter) {
 }
 
 void calculateMotorOutputs() {
-    // Calculate PID outputs
-    float rollOutput = computeRoll();
-    float pitchOutput = computePitch();
-    float yawOutput = computeYaw();
+    float rollOutput = 0.0f;
+    float pitchOutput = 0.0f;
+    float yawOutput = 0.0f;
+
+    if (baseThrottle > FlightConfig::MIN_THROTTLE_PERCENT) {
+        yawOutput = computeYaw();
+    }
+
+    if (baseThrottle > FlightConfig::ROLL_PITCH_PID_MIN_THROTTLE_PERCENT) {
+        rollOutput = computeRoll();
+        pitchOutput = computePitch();
+    }
 
     int fl_f_Adjust = -pitchOutput + rollOutput + yawOutput;  // Motor 1 (Front Left)
     int fr_r_Adjust = -pitchOutput - rollOutput - yawOutput;  // Motor 2 (Front Right)
@@ -1196,4 +1204,3 @@ void printDebugInfo() {
 
     Serial.println(text);
 }
-
