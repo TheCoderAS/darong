@@ -901,6 +901,13 @@ void setupWebServer(){
         server_.send(200, "text/plain", "OK");
     });
 
+    server_.on("/restart", HTTP_POST, []() {
+        markCommandReceived();
+        server_.send(200, "text/plain", "Restarting");
+        delay(100);
+        ESP.restart();
+    });
+
     server_.on("/getLogs", HTTP_GET, []() {
         char text[256];
         snprintf(text, sizeof(text),
