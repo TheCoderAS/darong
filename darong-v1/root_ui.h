@@ -765,6 +765,7 @@ const char ROOT_HTML[] = R"rawliteral(
       <button id="savePIDBtn" class="pid-button">Save PID</button>
       <button id="resetPIDBtn" class="pid-button">Reset PID</button>
       <button id="resetFlightBtn" class="pid-button">Reset Flight</button>
+      <button id="restartBtn" class="pid-button">Restart Drone</button>
     </div>
     <div id="pidStatus" class="pid-status"></div>
   </div>
@@ -802,6 +803,7 @@ const char ROOT_HTML[] = R"rawliteral(
     const savePIDBtn = document.getElementById("savePIDBtn");
     const resetPIDBtn = document.getElementById("resetPIDBtn");
     const resetFlightBtn = document.getElementById("resetFlightBtn");
+    const restartBtn = document.getElementById("restartBtn");
     const pidStatus = document.getElementById("pidStatus");
     const calibrateMPUButton = document.getElementById("calibrateMPUButton");
     const calibrateESCButton = document.getElementById("calibrateESCButton");
@@ -873,6 +875,9 @@ const char ROOT_HTML[] = R"rawliteral(
 
       resetFlightBtn.disabled = disabled;
       resetFlightBtn.style.opacity = disabled ? '0.5' : '1';
+
+      restartBtn.disabled = isInitialLoading;
+      restartBtn.style.opacity = isInitialLoading ? '0.5' : '1';
 
       calibrateMPUButton.disabled = true;
       calibrateESCButton.disabled = disabled;
@@ -1272,6 +1277,12 @@ const char ROOT_HTML[] = R"rawliteral(
     resetFlightBtn.onclick = function () {
       if (isLocked) return;
       fetch("/resetFlight");
+    };
+
+    restartBtn.onclick = function () {
+      if (isLocked) return;
+      flightStatusNote.innerText = 'Restarting...';
+      fetch("/restart", { method: 'POST' });
     };
 
     function runCalibration(button, statusElement, url, label) {

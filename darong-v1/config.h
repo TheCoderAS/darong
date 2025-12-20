@@ -29,7 +29,7 @@ struct SystemConfig {
 struct CalibrationConfig {
     static constexpr int ESC_CALIBRATION_DELAY_MS = 2000;
     static constexpr bool ESC_CALIBRATION = false;
-    static constexpr bool MPU6050_CALIBRATION = false;
+    static constexpr bool MPU6050_CALIBRATION = true;
     static constexpr bool ENABLE_DEBUG_PRINT = false;
     static constexpr uint32_t EEPROM_MAGIC = 0x4D505543; // 'MPUC'
     static constexpr size_t EEPROM_SIZE = 256;
@@ -82,7 +82,7 @@ struct PIDConfig {
     static constexpr float MAX_INTEGRAL = 200.0;
     static constexpr float MAX_PID_OUTPUT = 200.0;
     static constexpr float MIN_PID_OUTPUT = -200.0;
-    static constexpr float MAX_YAW_PID_OUTPUT = 20.0;
+    static constexpr float MAX_YAW_PID_OUTPUT = 50.0;
     static constexpr float MIN_DT_SECONDS = 0.001f; // Minimum dt used in PID math
 };
 
@@ -100,6 +100,7 @@ struct FlightConfig {
     // Throttle Settings
     static constexpr float MIN_THROTTLE_PERCENT = 5.0;
     static constexpr float MAX_THROTTLE_PERCENT = 80.0;
+    static constexpr float ROLL_PITCH_PID_MIN_THROTTLE_PERCENT = 20.0;
 };
 
 // MPU6050 Configuration
