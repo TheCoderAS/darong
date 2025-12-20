@@ -204,6 +204,14 @@ void markCommandReceived() {
     lastCommandMicros_ = micros();
 }
 
+bool requireAuth() {
+    if (!server_.authenticate(AuthConfig::BASIC_USER, AuthConfig::BASIC_PASSWORD)) {
+        server_.requestAuthentication(BASIC_AUTH, AuthConfig::REALM);
+        return false;
+    }
+    return true;
+}
+
 bool hasCommandTimedOut() {
     return (micros() - lastCommandMicros_) > (SystemConfig::COMMAND_TIMEOUT_MS * 1000UL);
 }
@@ -634,6 +642,10 @@ void setupWiFi() {
 
 void setupWebServer(){
     server_.on("/", HTTP_GET, []() {
+        if (!requireAuth()) {
+            return;
+        }
+
         const size_t chunkSize = 1024;
         const size_t totalLen = strlen(ROOT_HTML);
 
@@ -662,6 +674,10 @@ void setupWebServer(){
     });
 
     server_.on("/setThrottle", HTTP_GET, []() {
+        if (!requireAuth()) {
+            return;
+        }
+
         if (testModeEnabled_) {
             server_.send(409, "text/plain", "Test mode active");
             return;
@@ -727,6 +743,10 @@ void setupWebServer(){
     });
 
     server_.on("/setTestMode", HTTP_POST, []() {
+        if (!requireAuth()) {
+            return;
+        }
+
         if (server_.hasArg("enabled")) {
             testModeEnabled_ = server_.arg("enabled").toInt() == 1;
             markCommandReceived();
@@ -737,6 +757,10 @@ void setupWebServer(){
     });
 
     server_.on("/setTestMotor", HTTP_POST, []() {
+        if (!requireAuth()) {
+            return;
+        }
+
         if (server_.hasArg("motor") && server_.hasArg("enabled")) {
             String motor = server_.arg("motor");
             motor.toLowerCase();
@@ -772,6 +796,10 @@ void setupWebServer(){
     });
 
     server_.on("/arm", HTTP_POST, []() {
+        if (!requireAuth()) {
+            return;
+        }
+
         markCommandReceived();
         requestArm("Web arm command");
         if (flightState_ == FlightState::ARMED) {
@@ -809,6 +837,10 @@ void setupWebServer(){
     });
 
     server_.on("/setPID", HTTP_POST, []() {
+        if (!requireAuth()) {
+            return;
+        }
+
         bool hasAllArgs = server_.hasArg("kpRoll") && server_.hasArg("kiRoll") && server_.hasArg("kdRoll") &&
                           server_.hasArg("kpPitch") && server_.hasArg("kiPitch") && server_.hasArg("kdPitch") &&
                           server_.hasArg("kpYaw") && server_.hasArg("kiYaw") && server_.hasArg("kdYaw");
@@ -902,6 +934,10 @@ void setupWebServer(){
     });
 
     server_.on("/restart", HTTP_POST, []() {
+        if (!requireAuth()) {
+            return;
+        }
+
         markCommandReceived();
         server_.send(200, "text/plain", "Restarting");
         delay(100);
