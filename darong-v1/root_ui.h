@@ -221,6 +221,42 @@ const char ROOT_HTML[] = R"rawliteral(
       margin-top: 10px;
     }
 
+    .throttle-set-buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: center;
+      margin-bottom: 12px;
+    }
+
+    .throttle-set-btn {
+      min-width: 58px;
+      height: 32px;
+      border-radius: 16px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      background: rgba(255, 255, 255, 0.08);
+      color: #ffffff;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s ease;
+    }
+
+    .throttle-set-btn:hover {
+      background: rgba(255, 255, 255, 0.2);
+      transform: translateY(-1px);
+    }
+
+    .throttle-set-btn:active {
+      transform: scale(0.97);
+    }
+
+    .throttle-set-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+
     .throttle-btn {
       width: 40px;
       height: 40px;
@@ -626,6 +662,13 @@ const char ROOT_HTML[] = R"rawliteral(
     <div class="control-section">
       <div class="section-title">Throttle</div>
       <div class="throttle-control">
+        <div class="throttle-set-buttons">
+          <button class="throttle-set-btn" data-throttle="25">25%</button>
+          <button class="throttle-set-btn" data-throttle="30">30%</button>
+          <button class="throttle-set-btn" data-throttle="35">35%</button>
+          <button class="throttle-set-btn" data-throttle="40">40%</button>
+          <button class="throttle-set-btn" data-throttle="45">45%</button>
+        </div>
         <input type="range" min="0" max="100" value="0" id="masterThrottle">
         <div class="throttle-buttons">
           <button class="throttle-btn" id="decreaseThrottle">-</button>
@@ -783,6 +826,7 @@ const char ROOT_HTML[] = R"rawliteral(
     const motorToggleButtons = Array.from(document.querySelectorAll('.motor-toggle'));
     const decreaseThrottleBtn = document.getElementById("decreaseThrottle");
     const increaseThrottleBtn = document.getElementById("increaseThrottle");
+    const throttleSetButtons = Array.from(document.querySelectorAll('.throttle-set-btn'));
     const flightStateDisplay = document.getElementById("flightState");
     const flightStatusNote = document.getElementById("flightStatusNote");
     const armButton = document.getElementById("armButton");
@@ -854,6 +898,9 @@ const char ROOT_HTML[] = R"rawliteral(
       masterThrottle.disabled = disabled;
       decreaseThrottleBtn.disabled = disabled;
       increaseThrottleBtn.disabled = disabled;
+      throttleSetButtons.forEach(button => {
+        button.disabled = disabled;
+      });
 
       // Update stick controls
       Object.values(sticks).forEach(stick => {
@@ -925,6 +972,16 @@ const char ROOT_HTML[] = R"rawliteral(
         updateThrottle(currentValue + 1);
       }
     }
+
+    throttleSetButtons.forEach(button => {
+      button.addEventListener('click', () => {
+        if (isControlsDisabled()) return;
+        const targetValue = parseInt(button.dataset.throttle, 10);
+        if (!Number.isNaN(targetValue)) {
+          updateThrottle(targetValue);
+        }
+      });
+    });
 
     // Flight Lock Toggle
     flightLockToggle.onchange = function () {
