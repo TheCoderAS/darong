@@ -818,17 +818,17 @@ void setupWebServer(){
             return;
         }
 
-        Kp_roll_ = constrain(server_.arg("kpRoll").toFloat(), 0.0, 10.0);
-        Ki_roll_ = constrain(server_.arg("kiRoll").toFloat(), 0.0, 10.0);
-        Kd_roll_ = constrain(server_.arg("kdRoll").toFloat(), 0.0, 2.0);
+        Kp_roll_ = constrain(server_.arg("kpRoll").toFloat(), 0.0, 100.0);
+        Ki_roll_ = constrain(server_.arg("kiRoll").toFloat(), 0.0, 100.0);
+        Kd_roll_ = constrain(server_.arg("kdRoll").toFloat(), 0.0, 100.0);
 
-        Kp_pitch_ = constrain(server_.arg("kpPitch").toFloat(), 0.0, 10.0);
-        Ki_pitch_ = constrain(server_.arg("kiPitch").toFloat(), 0.0, 10.0);
-        Kd_pitch_ = constrain(server_.arg("kdPitch").toFloat(), 0.0, 2.0);
+        Kp_pitch_ = constrain(server_.arg("kpPitch").toFloat(), 0.0, 100.0);
+        Ki_pitch_ = constrain(server_.arg("kiPitch").toFloat(), 0.0, 100.0);
+        Kd_pitch_ = constrain(server_.arg("kdPitch").toFloat(), 0.0, 100.0);
 
-        Kp_yaw_ = constrain(server_.arg("kpYaw").toFloat(), 0.0, 10.0);
-        Ki_yaw_ = constrain(server_.arg("kiYaw").toFloat(), 0.0, 1.0);
-        Kd_yaw_ = constrain(server_.arg("kdYaw").toFloat(), 0.0, 1.0);
+        Kp_yaw_ = constrain(server_.arg("kpYaw").toFloat(), 0.0, 100.0);
+        Ki_yaw_ = constrain(server_.arg("kiYaw").toFloat(), 0.0, 100.0);
+        Kd_yaw_ = constrain(server_.arg("kdYaw").toFloat(), 0.0, 100.0);
 
         markCommandReceived();
         savePIDToEEPROM();
