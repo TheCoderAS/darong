@@ -49,6 +49,13 @@ struct WiFiConfig {
     static constexpr uint8_t AP_SUBNET[4] = {255, 255, 255, 0};
 };
 
+// Basic authentication for sensitive endpoints
+struct AuthConfig {
+    static constexpr const char* BASIC_USER = "admin";
+    static constexpr const char* BASIC_PASSWORD = "change-me";
+    static constexpr const char* REALM = "Darong Flight Controller";
+};
+
 // ESC Configuration
 struct ESCConfig {
     static constexpr int FL_PIN = 16;  // X -> Front Left // + ->Front
