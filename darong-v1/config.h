@@ -30,7 +30,7 @@ struct CalibrationConfig {
     static constexpr int ESC_CALIBRATION_DELAY_MS = 2000;
     static constexpr bool ESC_CALIBRATION = false;
     static constexpr bool MPU6050_CALIBRATION = true;
-    static constexpr bool ENABLE_DEBUG_PRINT = true;
+    static constexpr bool ENABLE_DEBUG_PRINT = false;
     static constexpr uint32_t EEPROM_MAGIC = 0x4D505543; // 'MPUC'
     static constexpr size_t EEPROM_SIZE = 256;
 };
@@ -52,8 +52,8 @@ struct WiFiConfig {
 // ESC Configuration
 struct ESCConfig {
     static constexpr int FL_PIN = 16;  // X -> Front Left // + ->Front
-    static constexpr int FR_PIN = 15;  // X -> Front Right // + -> Right
-    static constexpr int BL_PIN = 14;  // X -> Back Left // + -> Left
+    static constexpr int FR_PIN = 14;  // X -> Front Right // + -> Right
+    static constexpr int BL_PIN = 15;  // X -> Back Left // + -> Left
     static constexpr int BR_PIN = 13;  // X -> Back Right // + -> Back
 
     static constexpr int MIN_THROTTLE_PULSE = 1000;
@@ -82,16 +82,16 @@ struct PIDConfig {
     static constexpr float MAX_INTEGRAL = 200.0;
     static constexpr float MAX_PID_OUTPUT = 200.0;
     static constexpr float MIN_PID_OUTPUT = -200.0;
-    static constexpr float MAX_YAW_PID_OUTPUT = 50.0;
+    static constexpr float MAX_YAW_PID_OUTPUT = 200.0;
     static constexpr float MIN_DT_SECONDS = 0.001f; // Minimum dt used in PID math
 };
 
 // Flight Configuration
 struct FlightConfig {
     // Angle Limits
-    static constexpr float MAX_ROLL_ANGLE = 30.0;
-    static constexpr float MAX_PITCH_ANGLE = 30.0;
-    static constexpr float MAX_YAW_RATE = 200.0;
+    static constexpr float MAX_ROLL_ANGLE = 15.0;
+    static constexpr float MAX_PITCH_ANGLE = 15.0;
+    static constexpr float MAX_YAW_RATE = 100.0;
 
     // Arming Preconditions
     static constexpr float ARMING_ATTITUDE_LIMIT_DEG = 5.0;
@@ -100,7 +100,7 @@ struct FlightConfig {
     // Throttle Settings
     static constexpr float MIN_THROTTLE_PERCENT = 5.0;
     static constexpr float MAX_THROTTLE_PERCENT = 80.0;
-    static constexpr float ROLL_PITCH_PID_MIN_THROTTLE_PERCENT = 20.0;
+    static constexpr float ROLL_PITCH_PID_MIN_THROTTLE_PERCENT = 15.0;
 };
 
 // MPU6050 Configuration
