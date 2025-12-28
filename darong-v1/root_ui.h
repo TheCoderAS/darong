@@ -663,6 +663,7 @@ const char ROOT_HTML[] = R"rawliteral(
       <div class="section-title">Throttle</div>
       <div class="throttle-control">
         <div class="throttle-set-buttons">
+          <button class="throttle-set-btn" data-throttle="20">20%</button>
           <button class="throttle-set-btn" data-throttle="25">25%</button>
           <button class="throttle-set-btn" data-throttle="30">30%</button>
           <button class="throttle-set-btn" data-throttle="35">35%</button>
