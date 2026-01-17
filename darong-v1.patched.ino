@@ -1,0 +1,1400 @@
+#include "config.h"
+#include "root_ui.h"
+#include <Adafruit_MPU6050.h>
+#include <Adafruit_Sensor.h>
+#include <ESP32Servo.h>
+#include <cmath>
+#include <cstring>
+#include <EEPROM.h>
+#include <WiFi.h>
+#include <WebServer.h>
+#include <Wire.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <esp_task_wdt.h>
+
+TaskHandle_t webServerTaskHandle_ = NULL;
+TaskHandle_t pidTaskHandle_ = NULL;
+
+bool unregisterCurrentTaskFromWatchdog() {
+    esp_err_t err = esp_task_wdt_delete(NULL);
+    if (err != ESP_OK) {
+        Serial.printf("WARN: Failed to unregister current task from watchdog (err=%d).\n", err);
+        return false;
+    }
+    return true;
+}
+
+bool pauseWatchdogForCalibration() {
+    if (!unregisterCurrentTaskFromWatchdog()) {
+        Serial.println("ERROR: Cannot pause watchdog for calibration.");
+        return false;
+    }
+
+    if (pidTaskHandle_ != NULL) {
+        if (!unregisterPIDTaskFromWatchdog()) {
+            Serial.println("ERROR: Cannot pause PID task watchdog for calibration.");
+            // Attempt to restore web server watchdog before returning
+            registerCurrentTaskWithWatchdog();
+            return false;
+        }
+        vTaskSuspend(pidTaskHandle_);
+    }
+
+    return true;
+}
+
+bool resumeWatchdogAfterCalibration() {
+    bool success = true;
+
+    if (pidTaskHandle_ != NULL) {
+        vTaskResume(pidTaskHandle_);
+        if (!registerPIDTaskWithWatchdog()) {
+            Serial.println("ERROR: Failed to re-register PID task with watchdog after calibration.");
+            success = false;
+        }
+    }
+
+    if (!registerCurrentTaskWithWatchdog()) {
+        Serial.println("ERROR: Failed to re-register web server task with watchdog after calibration.");
+        success = false;
+    }
+
+    return success;
+}
+
+bool registerCurrentTaskWithWatchdog() {
+    esp_err_t err = esp_task_wdt_add(NULL);
+    if (err != ESP_OK) {
+        Serial.printf("WARN: Failed to re-register current task with watchdog (err=%d).\n", err);
+        return false;
+    }
+    return true;
+}
+
+bool unregisterPIDTaskFromWatchdog() {
+    if (pidTaskHandle_ == NULL) {
+        return true;
+    }
+
+    esp_err_t err = esp_task_wdt_delete(pidTaskHandle_);
+    if (err != ESP_OK) {
+        Serial.printf("WARN: Failed to unregister PID task from watchdog (err=%d).\n", err);
+        return false;
+    }
+    return true;
+}
+
+bool registerPIDTaskWithWatchdog() {
+    if (pidTaskHandle_ == NULL) {
+        return true;
+    }
+
+    esp_err_t err = esp_task_wdt_add(pidTaskHandle_);
+    if (err != ESP_OK) {
+        Serial.printf("WARN: Failed to re-register PID task with watchdog (err=%d).\n", err);
+        return false;
+    }
+    return true;
+}
+
+Adafruit_MPU6050 mpu_;
+
+Servo escFL_F_;
+Servo escFR_R_;
+Servo escBL_L_;
+Servo escBR_B_;
+
+int currentPulseFL_ = ESCConfig::MIN_THROTTLE_PULSE;
+int currentPulseFR_ = ESCConfig::MIN_THROTTLE_PULSE;
+int currentPulseBL_ = ESCConfig::MIN_THROTTLE_PULSE;
+int currentPulseBR_ = ESCConfig::MIN_THROTTLE_PULSE;
+bool escInitialized_ = false;
+
+WebServer server_(SystemConfig::WEB_SERVER_PORT);
+
+int baseThrottle = 0;
+bool testModeEnabled_ = false;
+bool motorTestMask_[4] = { false, false, false, false };
+bool eepromReady_ = false;
+
+enum class FlightState {
+    INIT,
+    CALIBRATING,
+    DISARMED,
+    ARMED,
+    FAILSAFE,
+    LANDING
+};
+
+const char* flightStateToString(FlightState state);
+void setFlightState(FlightState newState, const char* reason);
+
+FlightState flightState_ = FlightState::INIT;
+
+struct CalibrationData {
+    uint32_t magic;
+    float accelX_offset;
+    float accelY_offset;
+    float accelZ_offset;
+    float gyroX_offset;
+    float gyroY_offset;
+    float gyroZ_offset;
+};
+
+struct PIDStateData {
+    uint32_t magic;
+    float kpRoll;
+    float kiRoll;
+    float kdRoll;
+    float kpPitch;
+    float kiPitch;
+    float kdPitch;
+    float kpYaw;
+    float kiYaw;
+    float kdYaw;
+};
+
+// Calibration offsets
+float accelX_offset_ = 0.0f;
+float accelY_offset_ = 0.0f;
+float accelZ_offset_ = 0.0f;
+float gyroX_offset_ = 0.0f;
+float gyroY_offset_ = 0.0f;
+float gyroZ_offset_ = 0.0f;
+
+float gyroX_deg_s_ = 0.0f;
+float gyroY_deg_s_ = 0.0f;
+float gyroZ_deg_s_ = 0.0f;
+
+float dt_ = 0.0f;
+
+float roll_ = 0.0f;
+float pitch_ = 0.0f;
+float yaw_ = 0.0f;
+
+float targetRoll_ = 0.0;
+float targetPitch_ = 0.0;
+float targetYaw_ = 0.0;
+
+unsigned long previousMicros_ = micros();
+unsigned long lastDebugPrint_ = 0;
+
+float integralRoll_ = 0.0f;
+float prevErrorRoll_ = 0.0f;
+float integralPitch_ = 0.0f;
+float prevErrorPitch_ = 0.0f;
+float integralYaw_ = 0.0f;
+float prevErrorYaw_ = 0.0f;
+
+float Kp_roll_ = 0.0f;
+float Ki_roll_ = 0.0f;
+float Kd_roll_ = 0.0f;
+float Kp_pitch_ = 0.0f;
+float Ki_pitch_ = 0.0f;
+float Kd_pitch_ = 0.0f;
+float Kp_yaw_ = 0.0f;
+float Ki_yaw_ = 0.0f;
+float Kd_yaw_ = 0.0f;
+
+// ===================== PATCH: Bias + Trim + Cascaded + TPA =====================
+
+// ---- Continuous gyro bias (runtime) ----
+float gyroBiasX_deg_s_ = 0.0f;
+float gyroBiasY_deg_s_ = 0.0f;
+float gyroBiasZ_deg_s_ = 0.0f;
+
+static constexpr float GYRO_BIAS_ALPHA = 0.02f;   // 0.01..0.05
+static constexpr float GYRO_STILL_DPS  = 1.5f;    // still threshold
+static constexpr float ACC_1G          = 9.80665f;
+static constexpr float ACC_TOL_G       = 0.25f;   // +/-0.25g
+
+// ---- Auto-trim (learned setpoint offsets in degrees) ----
+float rollTrimDeg_  = 0.0f;
+float pitchTrimDeg_ = 0.0f;
+
+static constexpr float TRIM_MAX_DEG = 5.0f;
+static constexpr float TRIM_K       = 0.08f;  // 0.04..0.15 deg/sec per deg tilt
+
+static constexpr int   TRIM_THROTTLE_MIN = 25;     // percent
+static constexpr int   TRIM_THROTTLE_MAX = 55;     // percent
+static constexpr float CMD_NEUTRAL_DEG   = 1.0f;   // neutral command threshold
+static constexpr float GYRO_TRIM_STILL_DPS = 10.0f;
+
+float trimStableTime_s_ = 0.0f;
+static constexpr float TRIM_STABLE_REQUIRED_S = 1.0f;
+
+// ---- Cascaded controller targets (rate setpoints) ----
+float targetRollRate_dps_  = 0.0f;
+float targetPitchRate_dps_ = 0.0f;
+float targetYawRate_dps_   = 0.0f;
+
+// Outer loop gains (Angle -> Rate). Keep P-only.
+float Kp_angle_roll_  = 4.0f;
+float Kp_angle_pitch_ = 4.0f;
+
+static constexpr float MAX_ROLL_RATE_DPS  = 400.0f;
+static constexpr float MAX_PITCH_RATE_DPS = 400.0f;
+static constexpr float MAX_YAW_RATE_DPS   = 200.0f;
+
+// ---- Throttle-based PID scaling (TPA-style) ----
+static constexpr float TPA_START = 0.30f;   // start scaling around 30% throttle
+static constexpr float TPA_END   = 0.85f;   // full scaling by 85%
+static constexpr float P_SCALE_MIN = 0.75f;
+static constexpr float P_SCALE_MAX = 1.15f;
+static constexpr float D_SCALE_MIN = 0.70f;
+static constexpr float D_SCALE_MAX = 1.10f;
+
+static inline float smoothstep(float x) { return x * x * (3.0f - 2.0f * x); }
+static inline float clampf(float v, float lo, float hi) { return (v < lo) ? lo : (v > hi) ? hi : v; }
+
+// =================== END PATCH GLOBALS ===================
+
+bool sensorHealthy_ = true;
+unsigned long lastCommandMicros_ = 0;
+
+void markCommandReceived() {
+    lastCommandMicros_ = micros();
+}
+
+bool hasCommandTimedOut() {
+    return (micros() - lastCommandMicros_) > (SystemConfig::COMMAND_TIMEOUT_MS * 1000UL);
+}
+
+void delayWithWdt(uint32_t ms) {
+    // const uint32_t maxSlice = SystemConfig::WATCHDOG_TIMEOUT_MS / 2;
+
+    // uint32_t remaining = ms;
+    // while (remaining > 0) {
+    //     uint32_t slice = (remaining < maxSlice) ? remaining : maxSlice;
+    //     esp_task_wdt_reset();
+        vTaskDelay(pdMS_TO_TICKS(ms));
+    //     remaining -= slice;
+    // }
+}
+
+const char* flightStateToString(FlightState state) {
+    switch (state) {
+        case FlightState::INIT: return "INIT";
+        case FlightState::CALIBRATING: return "CALIBRATING";
+        case FlightState::DISARMED: return "DISARMED";
+        case FlightState::ARMED: return "ARMED";
+        case FlightState::FAILSAFE: return "FAILSAFE";
+        case FlightState::LANDING: return "LANDING";
+        default: return "UNKNOWN";
+    }
+}
+
+void resetIntegrators() {
+    integralRoll_ = 0.0f;
+    prevErrorRoll_ = 0.0f;
+    integralPitch_ = 0.0f;
+    prevErrorPitch_ = 0.0f;
+    integralYaw_ = 0.0f;
+    prevErrorYaw_ = 0.0f;
+}
+
+void applyMotorOutputsForState() {
+    switch (flightState_) {
+        case FlightState::INIT:
+        case FlightState::CALIBRATING:
+        case FlightState::DISARMED:
+            baseThrottle = 0;
+            if (escInitialized_) {
+                writeAllMotors(ESCConfig::MIN_THROTTLE_PULSE);
+            }
+            break;
+        case FlightState::FAILSAFE:
+            baseThrottle = 0;
+            if (escInitialized_) {
+                writeAllMotors(ESCConfig::MIN_THROTTLE_PULSE);
+            }
+            // Serial.println("Failsafe: Motors set to minimum pulse.");
+            break;
+        case FlightState::LANDING:
+            baseThrottle = (int)FlightConfig::MIN_THROTTLE_PERCENT;
+            break;
+        case FlightState::ARMED:
+            break;
+    }
+}
+
+void setFlightState(FlightState newState, const char* reason) {
+    if (flightState_ == newState) {
+        return;
+    }
+
+    FlightState previousState = flightState_;
+    if (previousState == FlightState::ARMED && newState != FlightState::ARMED) {
+        resetIntegrators();
+    }
+
+    flightState_ = newState;
+    Serial.print("Flight state changed: ");
+    Serial.print(flightStateToString(previousState));
+    Serial.print(" -> ");
+    Serial.print(flightStateToString(newState));
+    if (reason != nullptr) {
+        Serial.print(" | Reason: ");
+        Serial.print(reason);
+    }
+    Serial.println();
+
+    applyMotorOutputsForState();
+}
+
+void triggerFailsafe(const char* reason) {
+    setFlightState(FlightState::FAILSAFE, reason);
+}
+
+bool isSafeToArm() {
+    bool neutralAttitude = abs(roll_) <= FlightConfig::ARMING_ATTITUDE_LIMIT_DEG &&
+                           abs(pitch_) <= FlightConfig::ARMING_ATTITUDE_LIMIT_DEG;
+    bool lowThrottle = baseThrottle <= FlightConfig::ARMING_MAX_THROTTLE_PERCENT;
+    return sensorHealthy_ && neutralAttitude && lowThrottle;
+}
+
+void requestArm(const char* reason) {
+    if (flightState_ != FlightState::DISARMED) {
+        Serial.println("Arm request ignored: Flight controller not in DISARMED state.");
+        return;
+    }
+
+    if (!isSafeToArm()) {
+        Serial.println("Arm request denied: Preconditions failed (sensor health, attitude, throttle).");
+        return;
+    }
+
+    setFlightState(FlightState::ARMED, reason);
+}
+
+void requestDisarm(const char* reason) {
+    setFlightState(FlightState::DISARMED, reason);
+}
+
+void requestLanding(const char* reason) {
+    if (flightState_ == FlightState::ARMED) {
+        setFlightState(FlightState::LANDING, reason);
+    } else if (flightState_ == FlightState::LANDING) {
+        Serial.println("Landing already in progress.");
+    } else {
+        Serial.println("Landing request ignored: Not currently armed.");
+    }
+}
+
+void disarmMotors(const char* reason) {
+    requestDisarm(reason);
+}
+
+void setup() {
+    doSetup();
+}
+void loop() {
+    // Yield to the scheduler so the idle task can feed the watchdog.
+    vTaskDelay(pdMS_TO_TICKS(10));
+}
+
+
+void doSetup(){
+    Serial.begin(SystemConfig::SERIAL_BAUD_RATE);
+    Serial.println("Initializing Drone...");
+    lastCommandMicros_ = micros();
+
+    setFlightState(FlightState::CALIBRATING, "Boot");
+
+    // Clean up any watchdog that the ROM or previous run may have set up so we
+    // can safely reconfigure it with our timeout.
+    esp_err_t wdtDeinit = esp_task_wdt_deinit();
+    if (wdtDeinit != ESP_OK && wdtDeinit != ESP_ERR_INVALID_STATE) {
+        Serial.printf("WARN: Failed to deinit existing watchdog (err=%d).\n", wdtDeinit);
+    }
+
+    uint32_t watchdogTimeoutMs = max(1000, SystemConfig::WATCHDOG_TIMEOUT_MS);
+    esp_task_wdt_config_t watchdogConfig = {
+        .timeout_ms = watchdogTimeoutMs,
+        .idle_core_mask = (1 << portNUM_PROCESSORS) - 1,
+        .trigger_panic = true,
+    };
+
+    if (esp_task_wdt_init(&watchdogConfig) != ESP_OK) {
+        Serial.println("ERROR: Failed to initialize watchdog timer!");
+    }
+
+    // Initialize components
+    if (!setupMPU6050()) {
+        Serial.println("ERROR: Failed to initialize MPU6050!");
+        return;
+    }
+    
+    eepromReady_ = EEPROM.begin(CalibrationConfig::EEPROM_SIZE);
+    if (!eepromReady_) {
+        Serial.println("ERROR: Failed to initialize EEPROM for calibration storage!");
+    }
+
+    bool calibrationLoaded = eepromReady_ && loadCalibrationFromEEPROM();
+    if (!calibrationLoaded || CalibrationConfig::MPU6050_CALIBRATION) {
+        bool calibrationSuccess = calibrateMPU6050();
+        if (calibrationSuccess) {
+            saveCalibrationToEEPROM();
+        }
+    }
+
+    bool pidLoaded = eepromReady_ && loadPIDFromEEPROM();
+    if (!pidLoaded) {
+        Serial.println("No PID constants found in EEPROM. Using zeros until updated.");
+    }
+
+    setupESC();
+    if (CalibrationConfig::ESC_CALIBRATION) {
+        calibrateESC();
+    }
+    writeAllMotors(ESCConfig::MIN_THROTTLE_PULSE);
+
+    setFlightState(FlightState::DISARMED, "Calibration complete");
+
+    setupWiFi();
+    setupWebServer();
+    if(!runWebServer()){
+        Serial.println("ERROR: Failed to create web server task!");
+        return;
+    }
+
+    if(!runPIDTask()){
+        Serial.println("ERROR: Failed to create PID task!");
+        return;
+    }
+    Serial.println("Drone initialized successfully");
+}
+
+bool setupMPU6050(){
+
+    if (!mpu_.begin()) {
+        return false;
+    }
+
+    mpu_.setAccelerometerRange(MPU6050_RANGE_8_G);
+    mpu_.setGyroRange(MPU6050_RANGE_500_DEG);
+    mpu_.setFilterBandwidth(MPU6050_BAND_21_HZ);
+    
+    Serial.println("MPU6050 initialized successfully");
+
+    return true;
+}
+
+bool loadCalibrationFromEEPROM() {
+    CalibrationData data;
+    EEPROM.get(0, data);
+
+    if (data.magic != CalibrationConfig::EEPROM_MAGIC) {
+        Serial.println("No valid calibration data found in EEPROM. Calibration needed.");
+        return false;
+    }
+
+    accelX_offset_ = data.accelX_offset;
+    accelY_offset_ = data.accelY_offset;
+    accelZ_offset_ = data.accelZ_offset;
+    gyroX_offset_ = data.gyroX_offset;
+    gyroY_offset_ = data.gyroY_offset;
+    gyroZ_offset_ = data.gyroZ_offset;
+
+    Serial.println("Loaded MPU6050 calibration from EEPROM:");
+    printCalibrationData();
+    return true;
+}
+
+bool loadPIDFromEEPROM() {
+    PIDStateData data;
+    EEPROM.get(PIDStorageConfig::EEPROM_OFFSET, data);
+
+    if (data.magic != PIDStorageConfig::EEPROM_MAGIC) {
+        Serial.println("No valid PID data found in EEPROM. PID update required.");
+        return false;
+    }
+
+    Kp_roll_ = data.kpRoll;
+    Ki_roll_ = data.kiRoll;
+    Kd_roll_ = data.kdRoll;
+    Kp_pitch_ = data.kpPitch;
+    Ki_pitch_ = data.kiPitch;
+    Kd_pitch_ = data.kdPitch;
+    Kp_yaw_ = data.kpYaw;
+    Ki_yaw_ = data.kiYaw;
+    Kd_yaw_ = data.kdYaw;
+
+    Serial.println("Loaded PID constants from EEPROM.");
+    return true;
+}
+
+void saveCalibrationToEEPROM() {
+    if (!eepromReady_) {
+        Serial.println("EEPROM not initialized; skipping calibration save.");
+        return;
+    }
+
+    CalibrationData data;
+    data.magic = CalibrationConfig::EEPROM_MAGIC;
+    data.accelX_offset = accelX_offset_;
+    data.accelY_offset = accelY_offset_;
+    data.accelZ_offset = accelZ_offset_;
+    data.gyroX_offset = gyroX_offset_;
+    data.gyroY_offset = gyroY_offset_;
+    data.gyroZ_offset = gyroZ_offset_;
+
+    EEPROM.put(0, data);
+    EEPROM.commit();
+    Serial.println("Saved MPU6050 calibration to EEPROM.");
+}
+
+void savePIDToEEPROM() {
+    if (!eepromReady_) {
+        Serial.println("EEPROM not initialized; skipping PID save.");
+        return;
+    }
+
+    PIDStateData data;
+    data.magic = PIDStorageConfig::EEPROM_MAGIC;
+    data.kpRoll = Kp_roll_;
+    data.kiRoll = Ki_roll_;
+    data.kdRoll = Kd_roll_;
+    data.kpPitch = Kp_pitch_;
+    data.kiPitch = Ki_pitch_;
+    data.kdPitch = Kd_pitch_;
+    data.kpYaw = Kp_yaw_;
+    data.kiYaw = Ki_yaw_;
+    data.kdYaw = Kd_yaw_;
+
+    EEPROM.put(PIDStorageConfig::EEPROM_OFFSET, data);
+    EEPROM.commit();
+    Serial.println("Saved PID constants to EEPROM.");
+}
+
+bool calibrateMPU6050(){
+    Serial.println("Calibrating MPU6050...");
+    Serial.println("Please keep the drone still and level!");
+    delayWithWdt(2000);
+
+    float accelX_sum = 0, accelY_sum = 0, accelZ_sum = 0;
+    float gyroX_sum = 0, gyroY_sum = 0, gyroZ_sum = 0;
+    unsigned long calibrationStart = millis();
+
+    for (int i = 0; i < MPUConfig::CALIBRATION_SAMPLES; i++) {
+        // Serial.printf("%d ",i);
+        sensors_event_t a, g, temp;
+        if (!mpu_.getEvent(&a, &g, &temp)) {
+            Serial.println("ERROR: Failed to read MPU6050 event during calibration.");
+            sensorHealthy_ = false;
+            return false;
+        }
+
+        if (millis() - calibrationStart > MPUConfig::CALIBRATION_TIMEOUT_MS) {
+            Serial.println("ERROR: MPU6050 calibration timed out.");
+            sensorHealthy_ = false;
+            return false;
+        }
+        accelX_sum += a.acceleration.x;
+        accelY_sum += a.acceleration.y;
+        accelZ_sum += a.acceleration.z;
+        gyroX_sum += g.gyro.x;
+        gyroY_sum += g.gyro.y;
+        gyroZ_sum += g.gyro.z;
+
+        delayWithWdt(2);      // yield
+    }
+
+    // Calculate offsets
+    accelX_offset_ = accelX_sum / MPUConfig::CALIBRATION_SAMPLES;
+    accelY_offset_ = accelY_sum / MPUConfig::CALIBRATION_SAMPLES;
+    accelZ_offset_ = accelZ_sum / MPUConfig::CALIBRATION_SAMPLES - 9.80665;
+    gyroX_offset_ = gyroX_sum / MPUConfig::CALIBRATION_SAMPLES;
+    gyroY_offset_ = gyroY_sum / MPUConfig::CALIBRATION_SAMPLES;
+    gyroZ_offset_ = gyroZ_sum / MPUConfig::CALIBRATION_SAMPLES;
+
+    printCalibrationData();
+    return true;
+}
+
+void printCalibrationData() {
+    Serial.println("MPU6050 Calibration Complete!");
+    Serial.println("Offsets:");
+    Serial.print("Accel X: "); Serial.println(accelX_offset_);
+    Serial.print("Accel Y: "); Serial.println(accelY_offset_);
+    Serial.print("Accel Z: "); Serial.println(accelZ_offset_);
+    Serial.print("Gyro X: "); Serial.println(gyroX_offset_);
+    Serial.print("Gyro Y: "); Serial.println(gyroY_offset_);
+    Serial.print("Gyro Z: "); Serial.println(gyroZ_offset_);
+}
+
+void setupESC(){
+    ESP32PWM::allocateTimer(0);
+    ESP32PWM::allocateTimer(1);
+    ESP32PWM::allocateTimer(2);
+    ESP32PWM::allocateTimer(3);
+
+    escFL_F_.attach(ESCConfig::FL_PIN, ESCConfig::MIN_THROTTLE_PULSE, ESCConfig::MAX_THROTTLE_PULSE);
+    escFL_F_.setPeriodHertz(ESCConfig::ESC_FREQ);
+    escFR_R_.attach(ESCConfig::FR_PIN, ESCConfig::MIN_THROTTLE_PULSE, ESCConfig::MAX_THROTTLE_PULSE);
+    escFR_R_.setPeriodHertz(ESCConfig::ESC_FREQ);
+    escBL_L_.attach(ESCConfig::BL_PIN, ESCConfig::MIN_THROTTLE_PULSE, ESCConfig::MAX_THROTTLE_PULSE);
+    escBL_L_.setPeriodHertz(ESCConfig::ESC_FREQ);
+    escBR_B_.attach(ESCConfig::BR_PIN, ESCConfig::MIN_THROTTLE_PULSE, ESCConfig::MAX_THROTTLE_PULSE);
+    escBR_B_.setPeriodHertz(ESCConfig::ESC_FREQ);
+
+    escInitialized_ = true;
+
+    Serial.println("ESC initialized successfully");
+}
+
+void calibrateESC() {
+    Serial.println("--------------------------------------------------");
+    Serial.println("IMPORTANT: Make sure your ESCs are powered on now!");
+    delayWithWdt(CalibrationConfig::ESC_CALIBRATION_DELAY_MS);      // yield
+
+    Serial.println("\nStep 1: Sending maximum signal (2000) to all motors");
+    writeAllMotors(ESCConfig::MAX_THROTTLE_PULSE);
+    delayWithWdt(CalibrationConfig::ESC_CALIBRATION_DELAY_MS);      // yield
+
+    Serial.println("\nStep 2: Sending minimum signal (1000) to all motors");
+    writeAllMotors(ESCConfig::MIN_THROTTLE_PULSE);
+    delayWithWdt(CalibrationConfig::ESC_CALIBRATION_DELAY_MS);      // yield
+
+    Serial.println("\nESCs Calibration completed!");
+}
+
+void setupWiFi() {
+    Serial.print("Starting access point: ");
+    Serial.println(WiFiConfig::AP_SSID);
+
+    IPAddress local_ip(WiFiConfig::AP_IP[0], WiFiConfig::AP_IP[1], WiFiConfig::AP_IP[2], WiFiConfig::AP_IP[3]);
+    IPAddress gateway(WiFiConfig::AP_GATEWAY[0], WiFiConfig::AP_GATEWAY[1], WiFiConfig::AP_GATEWAY[2], WiFiConfig::AP_GATEWAY[3]);
+    IPAddress subnet(WiFiConfig::AP_SUBNET[0], WiFiConfig::AP_SUBNET[1], WiFiConfig::AP_SUBNET[2], WiFiConfig::AP_SUBNET[3]);
+
+    WiFi.mode(WIFI_AP);
+    if (!WiFi.softAPConfig(local_ip, gateway, subnet)) {
+        Serial.println("ERROR: Failed to configure static AP IP");
+        return;
+    }
+
+    bool apStarted = WiFi.softAP(WiFiConfig::AP_SSID, WiFiConfig::AP_PASSWORD);
+    if (!apStarted) {
+        Serial.println("ERROR: Failed to start access point");
+        return;
+    }
+
+    Serial.println("Access point started");
+    Serial.print("AP IP address: ");
+    Serial.println(WiFi.softAPIP());
+}
+
+void setupWebServer(){
+    server_.on("/", HTTP_GET, []() {
+        const size_t chunkSize = 1024;
+        const size_t totalLen = strlen(ROOT_HTML);
+
+        bool watchdogPaused = unregisterCurrentTaskFromWatchdog();
+
+        server_.setContentLength(CONTENT_LENGTH_UNKNOWN);
+        server_.send(200, "text/html", "");
+
+        size_t sent = 0;
+        while (sent < totalLen) {
+            size_t toSend = min(chunkSize, totalLen - sent);
+            server_.sendContent_P(ROOT_HTML + sent, toSend);
+            sent += toSend;
+
+            if (!watchdogPaused) {
+                esp_task_wdt_reset();
+            }
+            vTaskDelay(1);
+        }
+
+        server_.sendContent("");
+
+        if (watchdogPaused) {
+            registerCurrentTaskWithWatchdog();
+        }
+    });
+
+    server_.on("/setThrottle", HTTP_GET, []() {
+        if (testModeEnabled_) {
+            server_.send(409, "text/plain", "Test mode active");
+            return;
+        }
+
+        if (server_.hasArg("value")) {
+            int throttle = server_.arg("value").toInt();
+            baseThrottle = constrain(throttle, 0, FlightConfig::MAX_THROTTLE_PERCENT);
+            markCommandReceived();
+            server_.send(200, "text/plain", "OK");
+        } else {
+            server_.send(400, "text/plain", "Bad Request");
+        }
+    });
+
+    server_.on("/setTestThrottle", HTTP_GET, []() {
+        if (!testModeEnabled_) {
+            server_.send(409, "text/plain", "Test mode disabled");
+            return;
+        }
+
+        if (server_.hasArg("value")) {
+            int throttle = server_.arg("value").toInt();
+            baseThrottle = constrain(throttle, 0, FlightConfig::MAX_THROTTLE_PERCENT);
+            markCommandReceived();
+            server_.send(200, "text/plain", "OK");
+        } else {
+            server_.send(400, "text/plain", "Bad Request");
+        }
+    });
+
+    server_.on("/setRoll", HTTP_GET, []() {
+        if (server_.hasArg("value")) {
+            float roll = server_.arg("value").toFloat();
+            targetRoll_ = constrain(roll, -FlightConfig::MAX_ROLL_ANGLE, FlightConfig::MAX_ROLL_ANGLE);
+            markCommandReceived();
+            server_.send(200, "text/plain", "OK");
+        } else {
+            server_.send(400, "text/plain", "Bad Request");
+        }
+    });
+
+    server_.on("/setPitch", HTTP_GET, []() {
+        if (server_.hasArg("value")) {
+            float pitch = server_.arg("value").toFloat();
+            targetPitch_ = constrain(pitch, -FlightConfig::MAX_PITCH_ANGLE, FlightConfig::MAX_PITCH_ANGLE);
+            markCommandReceived();
+            server_.send(200, "text/plain", "OK");
+        } else {
+            server_.send(400, "text/plain", "Bad Request");
+        }
+    });
+
+    server_.on("/setYaw", HTTP_GET, []() {
+        if (server_.hasArg("value")) {
+            float yaw = server_.arg("value").toFloat();
+            targetYaw_ = constrain(yaw, -FlightConfig::MAX_YAW_RATE, FlightConfig::MAX_YAW_RATE);
+            markCommandReceived();
+            server_.send(200, "text/plain", "OK");
+        } else {
+            server_.send(400, "text/plain", "Bad Request");
+        }
+    });
+
+    server_.on("/setTestMode", HTTP_POST, []() {
+        if (server_.hasArg("enabled")) {
+            testModeEnabled_ = server_.arg("enabled").toInt() == 1;
+            markCommandReceived();
+            server_.send(200, "text/plain", testModeEnabled_ ? "ON" : "OFF");
+        } else {
+            server_.send(400, "text/plain", "Bad Request");
+        }
+    });
+
+    server_.on("/setTestMotor", HTTP_POST, []() {
+        if (server_.hasArg("motor") && server_.hasArg("enabled")) {
+            String motor = server_.arg("motor");
+            motor.toLowerCase();
+            bool enabled = server_.arg("enabled").toInt() == 1;
+            int index = -1;
+            if (motor == "fl") {
+                index = 0;
+            } else if (motor == "fr") {
+                index = 1;
+            } else if (motor == "bl") {
+                index = 2;
+            } else if (motor == "br") {
+                index = 3;
+            }
+
+            if (index >= 0) {
+                motorTestMask_[index] = enabled;
+                markCommandReceived();
+                server_.send(200, "text/plain", "OK");
+            } else {
+                server_.send(400, "text/plain", "Invalid motor");
+            }
+        } else {
+            server_.send(400, "text/plain", "Bad Request");
+        }
+    });
+
+    server_.on("/getStatus", HTTP_GET, []() {
+        char response[196];
+        snprintf(response, sizeof(response), "{\"state\":\"%s\",\"throttle\":%d,\"testMode\":%s,\"motorMask\":%u}",
+                 flightStateToString(flightState_), baseThrottle, testModeEnabled_ ? "true" : "false", getMotorTestMask());
+        server_.send(200, "application/json", response);
+    });
+
+    server_.on("/arm", HTTP_POST, []() {
+        markCommandReceived();
+        requestArm("Web arm command");
+        if (flightState_ == FlightState::ARMED) {
+            server_.send(200, "text/plain", "Armed");
+        } else {
+            server_.send(409, "text/plain", "Arm request failed");
+        }
+    });
+
+    server_.on("/disarm", HTTP_POST, []() {
+        markCommandReceived();
+        requestDisarm("Web disarm command");
+        server_.send(200, "text/plain", "Disarmed");
+    });
+
+    server_.on("/land", HTTP_POST, []() {
+        markCommandReceived();
+        requestLanding("Web land command");
+        if (flightState_ == FlightState::LANDING) {
+            server_.send(200, "text/plain", "Landing initiated");
+        } else {
+            server_.send(409, "text/plain", "Landing not initiated");
+        }
+    });
+
+    server_.on("/getPID", HTTP_GET, []() {
+        char response[256];
+        snprintf(response, sizeof(response),
+                 "{\"kpRoll\":%.3f,\"kiRoll\":%.3f,\"kdRoll\":%.3f,\"kpPitch\":%.3f,\"kiPitch\":%.3f,\"kdPitch\":%.3f,\"kpYaw\":%.3f,\"kiYaw\":%.3f,\"kdYaw\":%.3f}",
+                 Kp_roll_, Ki_roll_, Kd_roll_,
+                 Kp_pitch_, Ki_pitch_, Kd_pitch_,
+                 Kp_yaw_, Ki_yaw_, Kd_yaw_);
+
+        server_.send(200, "application/json", response);
+    });
+
+    server_.on("/setPID", HTTP_POST, []() {
+        bool hasAllArgs = server_.hasArg("kpRoll") && server_.hasArg("kiRoll") && server_.hasArg("kdRoll") &&
+                          server_.hasArg("kpPitch") && server_.hasArg("kiPitch") && server_.hasArg("kdPitch") &&
+                          server_.hasArg("kpYaw") && server_.hasArg("kiYaw") && server_.hasArg("kdYaw");
+
+        if (!hasAllArgs) {
+            server_.send(400, "text/plain", "Missing PID parameters");
+            return;
+        }
+
+        Kp_roll_ = constrain(server_.arg("kpRoll").toFloat(), 0.0, 100.0);
+        Ki_roll_ = constrain(server_.arg("kiRoll").toFloat(), 0.0, 100.0);
+        Kd_roll_ = constrain(server_.arg("kdRoll").toFloat(), 0.0, 100.0);
+
+        Kp_pitch_ = constrain(server_.arg("kpPitch").toFloat(), 0.0, 100.0);
+        Ki_pitch_ = constrain(server_.arg("kiPitch").toFloat(), 0.0, 100.0);
+        Kd_pitch_ = constrain(server_.arg("kdPitch").toFloat(), 0.0, 100.0);
+
+        Kp_yaw_ = constrain(server_.arg("kpYaw").toFloat(), 0.0, 100.0);
+        Ki_yaw_ = constrain(server_.arg("kiYaw").toFloat(), 0.0, 100.0);
+        Kd_yaw_ = constrain(server_.arg("kdYaw").toFloat(), 0.0, 100.0);
+
+        markCommandReceived();
+        savePIDToEEPROM();
+        server_.send(200, "text/plain", "PID constants updated");
+    });
+
+    server_.on("/calibrateMPU", HTTP_POST, []() {
+        if (!pauseWatchdogForCalibration()) {
+            server_.send(500, "text/plain", "Failed to pause watchdog for calibration");
+            return;
+        }
+
+        setFlightState(FlightState::CALIBRATING, "MPU calibration request");
+
+        bool calibrationSuccess = calibrateMPU6050();
+        if (calibrationSuccess) {
+            saveCalibrationToEEPROM();
+        }
+
+        bool watchdogResumed = resumeWatchdogAfterCalibration();
+
+        if (calibrationSuccess) {
+            setFlightState(FlightState::DISARMED, "MPU calibration complete");
+        } else {
+            setFlightState(FlightState::DISARMED, "MPU calibration failed");
+        }
+
+        if (!watchdogResumed) {
+            server_.send(500, "text/plain", "Calibration complete, but watchdog recovery failed");
+            return;
+        }
+
+        if (!calibrationSuccess) {
+            server_.send(500, "text/plain", "MPU6050 calibration failed");
+            return;
+        }
+
+        server_.send(200, "text/plain", "MPU6050 calibration complete");
+    });
+
+    server_.on("/calibrateESC", HTTP_POST, []() {
+        baseThrottle = 0;
+        disarmMotors(NULL);
+
+        setFlightState(FlightState::CALIBRATING, "ESC calibration request");
+
+        if (!pauseWatchdogForCalibration()) {
+            server_.send(500, "text/plain", "Failed to pause watchdog for ESC calibration");
+            return;
+        }
+
+        calibrateESC();
+
+        bool watchdogResumed = resumeWatchdogAfterCalibration();
+
+        setFlightState(FlightState::DISARMED, "ESC calibration complete");
+
+        if (!watchdogResumed) {
+            server_.send(500, "text/plain", "ESC calibration complete, but watchdog recovery failed");
+            return;
+        }
+
+        server_.send(200, "text/plain", "ESC calibration complete");
+    });
+
+    server_.on("/resetFlight", HTTP_GET, []() {
+        resetIntegrators();
+        requestDisarm("Flight reset");
+
+        server_.send(200, "text/plain", "OK");
+    });
+
+    server_.on("/restart", HTTP_POST, []() {
+        markCommandReceived();
+        server_.send(200, "text/plain", "Restarting");
+        delay(100);
+        ESP.restart();
+    });
+
+    server_.on("/getLogs", HTTP_GET, []() {
+        char text[256];
+        snprintf(text, sizeof(text),
+        "Roll: %.1f Pitch: %.1f | Throt: %d | Motors: %d/%d/%d/%d us | dt(ms): %.2f | Trim(R/P): %.2f/%.2f | GyBias(dps): %.2f/%.2f/%.2f | RatesSP(R/P/Y): %.1f/%.1f/%.1f | Kp: %.2f/%.2f/%.2f | Ki: %.2f/%.2f/%.2f | Kd: %.3f/%.3f/%.3f",
+        roll_, pitch_,
+        baseThrottle,
+        currentPulseFL_, currentPulseFR_, currentPulseBL_, currentPulseBR_,
+        dt_ * 1000.0,
+        rollTrimDeg_, pitchTrimDeg_,
+        gyroBiasX_deg_s_, gyroBiasY_deg_s_, gyroBiasZ_deg_s_,
+        targetRollRate_dps_, targetPitchRate_dps_, targetYawRate_dps_,
+        Kp_roll_, Kp_pitch_, Kp_yaw_,
+        Ki_roll_, Ki_pitch_, Ki_yaw_,
+        Kd_roll_, Kd_pitch_, Kd_yaw_
+        );
+
+        server_.send(200, "text/plain", text);
+    });
+    
+    server_.begin();
+    Serial.println("Web server setup complete!");
+}
+
+void webServerTask(void* parameter) {
+    esp_task_wdt_add(NULL);
+    while (true) {
+        unsigned long loopStartMs = millis();
+        server_.handleClient();
+        uint32_t loopElapsed = millis() - loopStartMs;
+        if (loopElapsed > SystemConfig::WEB_SERVER_TIMEOUT_MS) {
+            Serial.print("Warning: Web server task exceeded execution budget: ");
+            Serial.println(loopElapsed);
+            triggerFailsafe("Failsafe: Web server task exceeded execution budget");
+        }
+        esp_task_wdt_reset();
+        vTaskDelay(pdMS_TO_TICKS(SystemConfig::WEB_SERVER_UPDATE_INTERVAL_MS));
+    }
+}
+
+bool runWebServer(){
+    BaseType_t taskCreated = xTaskCreatePinnedToCore(
+        webServerTask,                                  // Task function
+        "WebServer",                                    // Task name
+        SystemConfig::WEB_SERVER_TASK_STACK_SIZE,       // Stack size
+        NULL,                                           // Task parameters
+        SystemConfig::WEB_SERVER_TASK_PRIORITY,         // Priority
+        &webServerTaskHandle_,                          // Task handle
+        SystemConfig::WEB_SERVER_TASK_CORE              // Core ID
+    );
+
+    if (taskCreated != pdPASS) {
+        return false;
+    }
+    Serial.println("Web server task created successfully");
+    return true;
+}
+bool runPIDTask(){
+    BaseType_t taskCreated = xTaskCreatePinnedToCore(
+        pidControlTask,                         // Task function
+        "PIDControl",                           // Task name
+        SystemConfig::PID_TASK_STACK_SIZE,      // Stack size
+        NULL,                                   // Task parameters
+        SystemConfig::PID_TASK_PRIORITY,        // Priority
+        &pidTaskHandle_,                        // Task handle
+        SystemConfig::PID_TASK_CORE             // Core ID
+    );
+    if (taskCreated != pdPASS) {
+            return false;
+        }
+    Serial.println("PID control task created successfully");
+    return true;
+}
+
+
+// =================== PATCH HELPERS ===================
+
+void updateGyroBiasIfStill(float gyroX_dps, float gyroY_dps, float gyroZ_dps,
+                           float ax, float ay, float az) {
+    // Safest: only learn bias while DISARMED and sitting still
+    if (flightState_ != FlightState::DISARMED) return;
+
+    float accMag = sqrtf(ax*ax + ay*ay + az*az);
+    bool accNear1G = fabsf(accMag - ACC_1G) < (ACC_TOL_G * ACC_1G);
+
+    bool gyroStill = (fabsf(gyroX_dps) < GYRO_STILL_DPS) &&
+                     (fabsf(gyroY_dps) < GYRO_STILL_DPS) &&
+                     (fabsf(gyroZ_dps) < GYRO_STILL_DPS);
+
+    if (!accNear1G || !gyroStill) return;
+
+    gyroBiasX_deg_s_ = (1.0f - GYRO_BIAS_ALPHA) * gyroBiasX_deg_s_ + GYRO_BIAS_ALPHA * gyroX_dps;
+    gyroBiasY_deg_s_ = (1.0f - GYRO_BIAS_ALPHA) * gyroBiasY_deg_s_ + GYRO_BIAS_ALPHA * gyroY_dps;
+    gyroBiasZ_deg_s_ = (1.0f - GYRO_BIAS_ALPHA) * gyroBiasZ_deg_s_ + GYRO_BIAS_ALPHA * gyroZ_dps;
+}
+
+void updateAutoTrim(float dt) {
+    if (flightState_ != FlightState::ARMED) {
+        trimStableTime_s_ = 0.0f;
+        return;
+    }
+
+    bool throttleInBand = (baseThrottle >= TRIM_THROTTLE_MIN && baseThrottle <= TRIM_THROTTLE_MAX);
+
+    bool cmdNeutral = (fabsf(targetRoll_)  < CMD_NEUTRAL_DEG) &&
+                      (fabsf(targetPitch_) < CMD_NEUTRAL_DEG);
+
+    bool gyroStill = (fabsf(gyroX_deg_s_) < GYRO_TRIM_STILL_DPS) &&
+                     (fabsf(gyroY_deg_s_) < GYRO_TRIM_STILL_DPS);
+
+    if (throttleInBand && cmdNeutral && gyroStill) {
+        trimStableTime_s_ += dt;
+    } else {
+        trimStableTime_s_ = 0.0f;
+        return;
+    }
+
+    if (trimStableTime_s_ < TRIM_STABLE_REQUIRED_S) return;
+
+    // Learn trims so that when user is neutral, average roll_/pitch_ tends to 0
+    rollTrimDeg_  -= TRIM_K * roll_  * dt;
+    pitchTrimDeg_ -= TRIM_K * pitch_ * dt;
+
+    rollTrimDeg_  = clampf(rollTrimDeg_,  -TRIM_MAX_DEG, TRIM_MAX_DEG);
+    pitchTrimDeg_ = clampf(pitchTrimDeg_, -TRIM_MAX_DEG, TRIM_MAX_DEG);
+}
+
+void computeThrottleScales(float &pScale, float &iScale, float &dScale) {
+    float t = clampf(baseThrottle / 100.0f, 0.0f, 1.0f);
+
+    float x;
+    if (t <= TPA_START) x = 0.0f;
+    else if (t >= TPA_END) x = 1.0f;
+    else x = (t - TPA_START) / (TPA_END - TPA_START);
+
+    x = smoothstep(x);
+
+    pScale = P_SCALE_MIN + (P_SCALE_MAX - P_SCALE_MIN) * x;
+    dScale = D_SCALE_MIN + (D_SCALE_MAX - D_SCALE_MIN) * x;
+
+    // Keep I mostly constant; reduce near idle to avoid windup
+    iScale = 1.0f;
+    if (t < 0.15f) iScale = 0.3f;
+}
+
+// =================== END PATCH HELPERS ===================
+
+
+void pidControlTask(void* parameter) {
+    TickType_t lastWakeTime = xTaskGetTickCount();  // Initialize once
+    esp_task_wdt_add(NULL);
+    while (true) {
+        unsigned long currentMicros = micros();
+        dt_ = (float)(currentMicros - previousMicros_) / 1000000.0;
+        dt_ = max(dt_, PIDConfig::MIN_DT_SECONDS);
+        previousMicros_ = currentMicros;
+
+        // if ((flightState_ == FlightState::ARMED || flightState_ == FlightState::LANDING) && hasCommandTimedOut()) {
+        //     triggerFailsafe("Failsafe: Command timeout.");
+        //     vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(SystemConfig::PID_UPDATE_INTERVAL_MS));
+        //     continue;
+        // }
+
+        sensorHealthy_ = updateMPU6050(dt_);
+        if (!sensorHealthy_) {
+            triggerFailsafe("Failsafe: Sensor read failed.");
+            vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(SystemConfig::PID_UPDATE_INTERVAL_MS));
+            continue;
+        }
+
+        switch (flightState_) {
+            case FlightState::ARMED:
+            case FlightState::LANDING:
+                if (baseThrottle > FlightConfig::MIN_THROTTLE_PERCENT) {
+                    if (testModeEnabled_) {
+                        resetIntegrators();
+                        applyTestMotorOutputs();
+                    } else {
+                        calculateMotorOutputs();
+                    }
+                } else {
+                    resetIntegrators();
+                    writeAllMotors(ESCConfig::MIN_THROTTLE_PULSE);
+                }
+                break;
+            case FlightState::INIT:
+            case FlightState::CALIBRATING:
+            case FlightState::DISARMED:
+            case FlightState::FAILSAFE:
+            default:
+                applyMotorOutputsForState();
+                break;
+        }
+
+        if (CalibrationConfig::ENABLE_DEBUG_PRINT ) { // Print every 50ms instead of every 5ms
+            printDebugInfo();
+            lastDebugPrint_ = currentMicros;
+        }
+
+        float loopElapsed =(float) (micros() - currentMicros)/1000.0;
+
+        // Serial.printf("dt(ms): %.2f, loop(ms): %.2f\n", dt_*1000.0f, loopElapsed);
+
+        if (loopElapsed > (float) SystemConfig::MAX_TASK_EXECUTION_TIME_MS) {
+            Serial.println("Warning: PID task exceeded execution budget");
+            triggerFailsafe("Failsafe: PID task exceeded execution budget");
+        }
+        esp_task_wdt_reset();
+
+        vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(SystemConfig::PID_UPDATE_INTERVAL_MS));
+    }
+}
+
+void calculateMotorOutputs() {
+    // ===== PATCH: Cascaded control (Angle -> Rate -> Rate PID) + Auto-trim + Throttle PID scaling =====
+
+    // Learn trims slowly during steady hover (only ARMED)
+    updateAutoTrim(dt_);
+
+    // Outer loop: angle error -> desired rate (deg/s)
+    float rollTargetDeg  = targetRoll_  + rollTrimDeg_;
+    float pitchTargetDeg = targetPitch_ + pitchTrimDeg_;
+
+    targetRollRate_dps_  = Kp_angle_roll_  * (rollTargetDeg  - roll_);
+    targetPitchRate_dps_ = Kp_angle_pitch_ * (pitchTargetDeg - pitch_);
+
+    // Yaw: rate mode only (targetYaw_ already represents desired yaw rate from UI)
+    targetYawRate_dps_ = clampf(targetYaw_, -MAX_YAW_RATE_DPS, MAX_YAW_RATE_DPS);
+
+    // Clamp target rates
+    targetRollRate_dps_  = clampf(targetRollRate_dps_,  -MAX_ROLL_RATE_DPS,  MAX_ROLL_RATE_DPS);
+    targetPitchRate_dps_ = clampf(targetPitchRate_dps_, -MAX_PITCH_RATE_DPS, MAX_PITCH_RATE_DPS);
+
+    // Throttle-based scaling (TPA-style) applied to RATE PID
+    float pScale, iScale, dScale;
+    computeThrottleScales(pScale, iScale, dScale);
+
+    float rollOutput  = 0.0f;
+    float pitchOutput = 0.0f;
+    float yawOutput   = 0.0f;
+
+    // Inner loop: rate PID (measured = gyro deg/s)
+    if (baseThrottle > FlightConfig::ROLL_PITCH_PID_MIN_THROTTLE_PERCENT) {
+        rollOutput = computePIDAxis(
+            targetRollRate_dps_,
+            gyroX_deg_s_,
+            integralRoll_,
+            prevErrorRoll_,
+            Kp_roll_ * pScale,
+            Ki_roll_ * iScale,
+            Kd_roll_ * dScale,
+            false
+        );
+
+        pitchOutput = computePIDAxis(
+            targetPitchRate_dps_,
+            gyroY_deg_s_,
+            integralPitch_,
+            prevErrorPitch_,
+            Kp_pitch_ * pScale,
+            Ki_pitch_ * iScale,
+            Kd_pitch_ * dScale,
+            false
+        );
+    }
+
+    if (baseThrottle > FlightConfig::MIN_THROTTLE_PERCENT) {
+        // yaw D is usually 0; scaling still safe
+        yawOutput = computePIDAxis(
+            targetYawRate_dps_,
+            gyroZ_deg_s_,
+            integralYaw_,
+            prevErrorYaw_,
+            Kp_yaw_ * pScale,
+            Ki_yaw_ * iScale,
+            Kd_yaw_ * dScale,
+            false,
+            PIDConfig::MAX_YAW_PID_OUTPUT
+        );
+    }
+
+    int fl_f_Adjust = -pitchOutput + rollOutput + yawOutput;  // Motor 1 (Front Left)
+    int fr_r_Adjust = -pitchOutput - rollOutput - yawOutput;  // Motor 2 (Front Right)
+    int bl_l_Adjust =  pitchOutput + rollOutput - yawOutput;  // Motor 3 (Back Left)
+    int br_b_Adjust =  pitchOutput - rollOutput + yawOutput;  // Motor 4 (Back Right)
+
+    int basePulse = throttleToPulse(baseThrottle);
+    writeMotorsAdjusted(basePulse, fl_f_Adjust, fr_r_Adjust, bl_l_Adjust, br_b_Adjust);
+}
+
+float normalizeAngleDegrees(float angle) {
+    angle = fmodf(angle + 180.0f, 360.0f);
+    if (angle < 0.0f) {
+        angle += 360.0f;
+    }
+    return angle - 180.0f;
+}
+
+float computePIDAxis(float target, float current, float& integralTerm, float& prevError, float kp, float ki, float kd, bool wrapAngle, float outputLimit = PIDConfig::MAX_PID_OUTPUT) {
+    float error = wrapAngle ? normalizeAngleDegrees(target - current) : (target - current);
+
+    float pTerm = kp * error;
+    float iTerm = constrain(integralTerm + (ki * (error + prevError) * (dt_ / 2.0f)), -PIDConfig::MAX_INTEGRAL, PIDConfig::MAX_INTEGRAL);
+    float dTerm = kd * (error - prevError) / dt_;
+    float pidOutput = constrain(pTerm + iTerm + dTerm, -outputLimit, outputLimit);
+
+    prevError = error;
+    integralTerm = iTerm;
+
+    return pidOutput;
+}
+
+float computeRoll() {
+    // Legacy path (unused). Rate control is implemented in calculateMotorOutputs().
+    return computePIDAxis(targetRollRate_dps_, gyroX_deg_s_, integralRoll_, prevErrorRoll_, Kp_roll_, Ki_roll_, Kd_roll_, false);
+}
+
+float computePitch() {
+    // Legacy path (unused). Rate control is implemented in calculateMotorOutputs().
+    return computePIDAxis(targetPitchRate_dps_, gyroY_deg_s_, integralPitch_, prevErrorPitch_, Kp_pitch_, Ki_pitch_, Kd_pitch_, false);
+}
+
+float computeYaw() {
+    // Legacy path (unused). Yaw is rate-controlled (no yaw angle integration).
+    return computePIDAxis(targetYawRate_dps_, gyroZ_deg_s_, integralYaw_, prevErrorYaw_, Kp_yaw_, Ki_yaw_, Kd_yaw_, false, PIDConfig::MAX_YAW_PID_OUTPUT);
+}
+
+void writeAllMotors(int pulse) {
+    currentPulseFL_ = pulse;
+    currentPulseFR_ = pulse;
+    currentPulseBL_ = pulse;
+    currentPulseBR_ = pulse;
+
+    escFL_F_.writeMicroseconds(pulse);
+    escFR_R_.writeMicroseconds(pulse);
+    escBL_L_.writeMicroseconds(pulse);
+    escBR_B_.writeMicroseconds(pulse);
+}
+
+void writeMotorsAdjusted(int basePulse, int flAdjust, int frAdjust, int blAdjust, int brAdjust) {
+    currentPulseFL_ = constrain(basePulse + flAdjust, ESCConfig::MIN_THROTTLE_PULSE, ESCConfig::MAX_THROTTLE_PULSE);
+    currentPulseFR_ = constrain(basePulse + frAdjust, ESCConfig::MIN_THROTTLE_PULSE, ESCConfig::MAX_THROTTLE_PULSE);
+    currentPulseBL_ = constrain(basePulse + blAdjust, ESCConfig::MIN_THROTTLE_PULSE, ESCConfig::MAX_THROTTLE_PULSE);
+    currentPulseBR_ = constrain(basePulse + brAdjust, ESCConfig::MIN_THROTTLE_PULSE, ESCConfig::MAX_THROTTLE_PULSE);
+
+    escFL_F_.writeMicroseconds(currentPulseFL_);
+    escFR_R_.writeMicroseconds(currentPulseFR_);
+    escBL_L_.writeMicroseconds(currentPulseBL_);
+    escBR_B_.writeMicroseconds(currentPulseBR_);
+}
+
+int throttleToPulse(int throttlePercent) {
+    return map(throttlePercent, 0, 100, ESCConfig::MIN_THROTTLE_PULSE, ESCConfig::MAX_THROTTLE_PULSE);
+}
+
+uint8_t getMotorTestMask() {
+    uint8_t mask = 0;
+    mask |= motorTestMask_[0] ? 0x1 : 0;
+    mask |= motorTestMask_[1] ? 0x2 : 0;
+    mask |= motorTestMask_[2] ? 0x4 : 0;
+    mask |= motorTestMask_[3] ? 0x8 : 0;
+    return mask;
+}
+
+void applyTestMotorOutputs() {
+    int activePulse = throttleToPulse(baseThrottle);
+    int idlePulse = ESCConfig::MIN_THROTTLE_PULSE;
+
+    currentPulseFL_ = motorTestMask_[0] ? activePulse : idlePulse;
+    currentPulseFR_ = motorTestMask_[1] ? activePulse : idlePulse;
+    currentPulseBL_ = motorTestMask_[2] ? activePulse : idlePulse;
+    currentPulseBR_ = motorTestMask_[3] ? activePulse : idlePulse;
+
+    escFL_F_.writeMicroseconds(currentPulseFL_);
+    escFR_R_.writeMicroseconds(currentPulseFR_);
+    escBL_L_.writeMicroseconds(currentPulseBL_);
+    escBR_B_.writeMicroseconds(currentPulseBR_);
+}
+
+bool updateMPU6050(float effectiveDt) {
+    sensors_event_t a, g, temp;
+    if (!mpu_.getEvent(&a, &g, &temp)) {
+        return false;
+    }
+
+    // Apply calibration offsets
+    float accelX = a.acceleration.x - accelX_offset_;
+    float accelY = a.acceleration.y - accelY_offset_;
+    float accelZ = a.acceleration.z - accelZ_offset_;
+    float gyroX = g.gyro.x - gyroX_offset_;
+    float gyroY = g.gyro.y - gyroY_offset_;
+    float gyroZ = g.gyro.z - gyroZ_offset_;
+
+    // Convert gyro to degrees/s
+    gyroX_deg_s_ = gyroX * 180.0f / PI;
+    gyroY_deg_s_ = gyroY * 180.0f / PI;
+    gyroZ_deg_s_ = gyroZ * 180.0f / PI;
+
+    // ---- PATCH: continuous bias update + correction (while DISARMED & still) ----
+    updateGyroBiasIfStill(gyroX_deg_s_, gyroY_deg_s_, gyroZ_deg_s_, accelX, accelY, accelZ);
+
+    gyroX_deg_s_ -= gyroBiasX_deg_s_;
+    gyroY_deg_s_ -= gyroBiasY_deg_s_;
+    gyroZ_deg_s_ -= gyroBiasZ_deg_s_;
+
+    // Calculate angles from accelerometer
+    float accelRoll = atan2(accelY, accelZ) * 180.0f / PI;
+    float accelPitch = atan2(-accelX, sqrt(accelY * accelY + accelZ * accelZ)) * 180.0f / PI;
+
+    // Complementary filter
+    roll_ = MPUConfig::COMPLEMENTARY_FILTER_ALPHA * (roll_ + gyroX_deg_s_ * effectiveDt) +
+            (1.0f - MPUConfig::COMPLEMENTARY_FILTER_ALPHA) * accelRoll;
+    pitch_ = MPUConfig::COMPLEMENTARY_FILTER_ALPHA * (pitch_ + gyroY_deg_s_ * effectiveDt) +
+                (1.0f - MPUConfig::COMPLEMENTARY_FILTER_ALPHA) * accelPitch;
+    // NOTE: yaw angle integration removed (yaw is rate-controlled only)
+
+    return true;
+
+}
+
+void printDebugInfo() {
+        char text[256];
+        snprintf(text, sizeof(text),
+        "Roll: %.1f Pitch: %.1f | Throt: %d | Motors: %d/%d/%d/%d us | dt(ms): %.2f | Trim(R/P): %.2f/%.2f | GyBias(dps): %.2f/%.2f/%.2f | RatesSP(R/P/Y): %.1f/%.1f/%.1f | Kp: %.2f/%.2f/%.2f | Ki: %.2f/%.2f/%.2f | Kd: %.3f/%.3f/%.3f",
+        roll_, pitch_,
+        baseThrottle,
+        currentPulseFL_, currentPulseFR_, currentPulseBL_, currentPulseBR_,
+        dt_ * 1000.0,
+        rollTrimDeg_, pitchTrimDeg_,
+        gyroBiasX_deg_s_, gyroBiasY_deg_s_, gyroBiasZ_deg_s_,
+        targetRollRate_dps_, targetPitchRate_dps_, targetYawRate_dps_,
+        Kp_roll_, Kp_pitch_, Kp_yaw_,
+        Ki_roll_, Ki_pitch_, Ki_yaw_,
+        Kd_roll_, Kd_pitch_, Kd_yaw_
+        );
+
+    Serial.println(text);
+}
