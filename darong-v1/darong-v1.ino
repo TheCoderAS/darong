@@ -197,6 +197,59 @@ float Kp_yaw_ = 0.0f;
 float Ki_yaw_ = 0.0f;
 float Kd_yaw_ = 0.0f;
 
+// ===================== PATCH: Bias + Trim + Cascaded + TPA =====================
+
+// ---- Continuous gyro bias (runtime) ----
+float gyroBiasX_deg_s_ = 0.0f;
+float gyroBiasY_deg_s_ = 0.0f;
+float gyroBiasZ_deg_s_ = 0.0f;
+
+static constexpr float GYRO_BIAS_ALPHA = 0.02f;   // 0.01..0.05
+static constexpr float GYRO_STILL_DPS  = 1.5f;    // still threshold
+static constexpr float ACC_1G          = 9.80665f;
+static constexpr float ACC_TOL_G       = 0.25f;   // +/-0.25g
+
+// ---- Auto-trim (learned setpoint offsets in degrees) ----
+float rollTrimDeg_  = 0.0f;
+float pitchTrimDeg_ = 0.0f;
+
+static constexpr float TRIM_MAX_DEG = 5.0f;
+static constexpr float TRIM_K       = 0.08f;  // 0.04..0.15 deg/sec per deg tilt
+
+static constexpr int   TRIM_THROTTLE_MIN = 25;     // percent
+static constexpr int   TRIM_THROTTLE_MAX = 55;     // percent
+static constexpr float CMD_NEUTRAL_DEG   = 1.0f;   // neutral command threshold
+static constexpr float GYRO_TRIM_STILL_DPS = 10.0f;
+
+float trimStableTime_s_ = 0.0f;
+static constexpr float TRIM_STABLE_REQUIRED_S = 1.0f;
+
+// ---- Cascaded controller targets (rate setpoints) ----
+float targetRollRate_dps_  = 0.0f;
+float targetPitchRate_dps_ = 0.0f;
+float targetYawRate_dps_   = 0.0f;
+
+// Outer loop gains (Angle -> Rate). Keep P-only.
+float Kp_angle_roll_  = 4.0f;
+float Kp_angle_pitch_ = 4.0f;
+
+static constexpr float MAX_ROLL_RATE_DPS  = 400.0f;
+static constexpr float MAX_PITCH_RATE_DPS = 400.0f;
+static constexpr float MAX_YAW_RATE_DPS   = 200.0f;
+
+// ---- Throttle-based PID scaling (TPA-style) ----
+static constexpr float TPA_START = 0.30f;   // start scaling around 30% throttle
+static constexpr float TPA_END   = 0.85f;   // full scaling by 85%
+static constexpr float P_SCALE_MIN = 0.75f;
+static constexpr float P_SCALE_MAX = 1.15f;
+static constexpr float D_SCALE_MIN = 0.70f;
+static constexpr float D_SCALE_MAX = 1.10f;
+
+static inline float smoothstep(float x) { return x * x * (3.0f - 2.0f * x); }
+static inline float clampf(float v, float lo, float hi) { return (v < lo) ? lo : (v > hi) ? hi : v; }
+
+// =================== END PATCH GLOBALS ===================
+
 bool sensorHealthy_ = true;
 unsigned long lastCommandMicros_ = 0;
 
@@ -911,18 +964,17 @@ void setupWebServer(){
     server_.on("/getLogs", HTTP_GET, []() {
         char text[256];
         snprintf(text, sizeof(text),
-        "Roll: %.1f Pitch: %.1f Yaw: %.1f | Throt: %d | Motors: %d/%d/%d/%d us | dt(ms): %.2f | Kp: %.2f/%.2f/%.2f | Ki: %.2f/%.2f/%.2f | Kd: %.3f/%.3f/%.3f | Corrections: %.3f/%.3f | %.3f/%.3f | %.3f/%.3f",
-        roll_, pitch_, yaw_,
-        // targetRoll_, targetPitch_, targetYaw_,
+        "Roll: %.1f Pitch: %.1f | Throt: %d | Motors: %d/%d/%d/%d us | dt(ms): %.2f | Trim(R/P): %.2f/%.2f | GyBias(dps): %.2f/%.2f/%.2f | RatesSP(R/P/Y): %.1f/%.1f/%.1f | Kp: %.2f/%.2f/%.2f | Ki: %.2f/%.2f/%.2f | Kd: %.3f/%.3f/%.3f",
+        roll_, pitch_,
         baseThrottle,
         currentPulseFL_, currentPulseFR_, currentPulseBL_, currentPulseBR_,
         dt_ * 1000.0,
+        rollTrimDeg_, pitchTrimDeg_,
+        gyroBiasX_deg_s_, gyroBiasY_deg_s_, gyroBiasZ_deg_s_,
+        targetRollRate_dps_, targetPitchRate_dps_, targetYawRate_dps_,
         Kp_roll_, Kp_pitch_, Kp_yaw_,
         Ki_roll_, Ki_pitch_, Ki_yaw_,
-        Kd_roll_, Kd_pitch_, Kd_yaw_,
-        integralRoll_, prevErrorRoll_,
-        integralPitch_, prevErrorPitch_,
-        integralYaw_, prevErrorYaw_
+        Kd_roll_, Kd_pitch_, Kd_yaw_
         );
 
         server_.send(200, "text/plain", text);
@@ -981,6 +1033,79 @@ bool runPIDTask(){
     Serial.println("PID control task created successfully");
     return true;
 }
+
+
+// =================== PATCH HELPERS ===================
+
+void updateGyroBiasIfStill(float gyroX_dps, float gyroY_dps, float gyroZ_dps,
+                           float ax, float ay, float az) {
+    // Safest: only learn bias while DISARMED and sitting still
+    if (flightState_ != FlightState::DISARMED) return;
+
+    float accMag = sqrtf(ax*ax + ay*ay + az*az);
+    bool accNear1G = fabsf(accMag - ACC_1G) < (ACC_TOL_G * ACC_1G);
+
+    bool gyroStill = (fabsf(gyroX_dps) < GYRO_STILL_DPS) &&
+                     (fabsf(gyroY_dps) < GYRO_STILL_DPS) &&
+                     (fabsf(gyroZ_dps) < GYRO_STILL_DPS);
+
+    if (!accNear1G || !gyroStill) return;
+
+    gyroBiasX_deg_s_ = (1.0f - GYRO_BIAS_ALPHA) * gyroBiasX_deg_s_ + GYRO_BIAS_ALPHA * gyroX_dps;
+    gyroBiasY_deg_s_ = (1.0f - GYRO_BIAS_ALPHA) * gyroBiasY_deg_s_ + GYRO_BIAS_ALPHA * gyroY_dps;
+    gyroBiasZ_deg_s_ = (1.0f - GYRO_BIAS_ALPHA) * gyroBiasZ_deg_s_ + GYRO_BIAS_ALPHA * gyroZ_dps;
+}
+
+void updateAutoTrim(float dt) {
+    if (flightState_ != FlightState::ARMED) {
+        trimStableTime_s_ = 0.0f;
+        return;
+    }
+
+    bool throttleInBand = (baseThrottle >= TRIM_THROTTLE_MIN && baseThrottle <= TRIM_THROTTLE_MAX);
+
+    bool cmdNeutral = (fabsf(targetRoll_)  < CMD_NEUTRAL_DEG) &&
+                      (fabsf(targetPitch_) < CMD_NEUTRAL_DEG);
+
+    bool gyroStill = (fabsf(gyroX_deg_s_) < GYRO_TRIM_STILL_DPS) &&
+                     (fabsf(gyroY_deg_s_) < GYRO_TRIM_STILL_DPS);
+
+    if (throttleInBand && cmdNeutral && gyroStill) {
+        trimStableTime_s_ += dt;
+    } else {
+        trimStableTime_s_ = 0.0f;
+        return;
+    }
+
+    if (trimStableTime_s_ < TRIM_STABLE_REQUIRED_S) return;
+
+    // Learn trims so that when user is neutral, average roll_/pitch_ tends to 0
+    rollTrimDeg_  -= TRIM_K * roll_  * dt;
+    pitchTrimDeg_ -= TRIM_K * pitch_ * dt;
+
+    rollTrimDeg_  = clampf(rollTrimDeg_,  -TRIM_MAX_DEG, TRIM_MAX_DEG);
+    pitchTrimDeg_ = clampf(pitchTrimDeg_, -TRIM_MAX_DEG, TRIM_MAX_DEG);
+}
+
+void computeThrottleScales(float &pScale, float &iScale, float &dScale) {
+    float t = clampf(baseThrottle / 100.0f, 0.0f, 1.0f);
+
+    float x;
+    if (t <= TPA_START) x = 0.0f;
+    else if (t >= TPA_END) x = 1.0f;
+    else x = (t - TPA_START) / (TPA_END - TPA_START);
+
+    x = smoothstep(x);
+
+    pScale = P_SCALE_MIN + (P_SCALE_MAX - P_SCALE_MIN) * x;
+    dScale = D_SCALE_MIN + (D_SCALE_MAX - D_SCALE_MIN) * x;
+
+    // Keep I mostly constant; reduce near idle to avoid windup
+    iScale = 1.0f;
+    if (t < 0.15f) iScale = 0.3f;
+}
+
+// =================== END PATCH HELPERS ===================
 
 
 void pidControlTask(void* parameter) {
@@ -1049,29 +1174,82 @@ void pidControlTask(void* parameter) {
 }
 
 void calculateMotorOutputs() {
-    float rollOutput = 0.0f;
-    float pitchOutput = 0.0f;
-    float yawOutput = 0.0f;
+    // ===== PATCH: Cascaded control (Angle -> Rate -> Rate PID) + Auto-trim + Throttle PID scaling =====
 
-    if (baseThrottle > FlightConfig::MIN_THROTTLE_PERCENT) {
-        yawOutput = computeYaw();
+    // Learn trims slowly during steady hover (only ARMED)
+    updateAutoTrim(dt_);
+
+    // Outer loop: angle error -> desired rate (deg/s)
+    float rollTargetDeg  = targetRoll_  + rollTrimDeg_;
+    float pitchTargetDeg = targetPitch_ + pitchTrimDeg_;
+
+    targetRollRate_dps_  = Kp_angle_roll_  * (rollTargetDeg  - roll_);
+    targetPitchRate_dps_ = Kp_angle_pitch_ * (pitchTargetDeg - pitch_);
+
+    // Yaw: rate mode only (targetYaw_ already represents desired yaw rate from UI)
+    targetYawRate_dps_ = clampf(targetYaw_, -MAX_YAW_RATE_DPS, MAX_YAW_RATE_DPS);
+
+    // Clamp target rates
+    targetRollRate_dps_  = clampf(targetRollRate_dps_,  -MAX_ROLL_RATE_DPS,  MAX_ROLL_RATE_DPS);
+    targetPitchRate_dps_ = clampf(targetPitchRate_dps_, -MAX_PITCH_RATE_DPS, MAX_PITCH_RATE_DPS);
+
+    // Throttle-based scaling (TPA-style) applied to RATE PID
+    float pScale, iScale, dScale;
+    computeThrottleScales(pScale, iScale, dScale);
+
+    float rollOutput  = 0.0f;
+    float pitchOutput = 0.0f;
+    float yawOutput   = 0.0f;
+
+    // Inner loop: rate PID (measured = gyro deg/s)
+    if (baseThrottle > FlightConfig::ROLL_PITCH_PID_MIN_THROTTLE_PERCENT) {
+        rollOutput = computePIDAxis(
+            targetRollRate_dps_,
+            gyroX_deg_s_,
+            integralRoll_,
+            prevErrorRoll_,
+            Kp_roll_ * pScale,
+            Ki_roll_ * iScale,
+            Kd_roll_ * dScale,
+            false
+        );
+
+        pitchOutput = computePIDAxis(
+            targetPitchRate_dps_,
+            gyroY_deg_s_,
+            integralPitch_,
+            prevErrorPitch_,
+            Kp_pitch_ * pScale,
+            Ki_pitch_ * iScale,
+            Kd_pitch_ * dScale,
+            false
+        );
     }
 
-    if (baseThrottle > FlightConfig::ROLL_PITCH_PID_MIN_THROTTLE_PERCENT) {
-        rollOutput = computeRoll();
-        pitchOutput = computePitch();
+    if (baseThrottle > FlightConfig::MIN_THROTTLE_PERCENT) {
+        // yaw D is usually 0; scaling still safe
+        yawOutput = computePIDAxis(
+            targetYawRate_dps_,
+            gyroZ_deg_s_,
+            integralYaw_,
+            prevErrorYaw_,
+            Kp_yaw_ * pScale,
+            Ki_yaw_ * iScale,
+            Kd_yaw_ * dScale,
+            false,
+            PIDConfig::MAX_YAW_PID_OUTPUT
+        );
     }
 
     int fl_f_Adjust = -pitchOutput + rollOutput + yawOutput;  // Motor 1 (Front Left)
     int fr_r_Adjust = -pitchOutput - rollOutput - yawOutput;  // Motor 2 (Front Right)
-    int bl_l_Adjust =  pitchOutput + rollOutput - yawOutput;// Motor 3 (Back Left)
-    int br_b_Adjust = pitchOutput - rollOutput + yawOutput; // Motor 4 (Back Right)
+    int bl_l_Adjust =  pitchOutput + rollOutput - yawOutput;  // Motor 3 (Back Left)
+    int br_b_Adjust =  pitchOutput - rollOutput + yawOutput;  // Motor 4 (Back Right)
 
-
-    // Write to motors
     int basePulse = throttleToPulse(baseThrottle);
     writeMotorsAdjusted(basePulse, fl_f_Adjust, fr_r_Adjust, bl_l_Adjust, br_b_Adjust);
 }
+
 float normalizeAngleDegrees(float angle) {
     angle = fmodf(angle + 180.0f, 360.0f);
     if (angle < 0.0f) {
@@ -1095,15 +1273,18 @@ float computePIDAxis(float target, float current, float& integralTerm, float& pr
 }
 
 float computeRoll() {
-    return computePIDAxis(targetRoll_, roll_, integralRoll_, prevErrorRoll_, Kp_roll_, Ki_roll_, Kd_roll_, false);
+    // Legacy path (unused). Rate control is implemented in calculateMotorOutputs().
+    return computePIDAxis(targetRollRate_dps_, gyroX_deg_s_, integralRoll_, prevErrorRoll_, Kp_roll_, Ki_roll_, Kd_roll_, false);
 }
 
 float computePitch() {
-    return computePIDAxis(targetPitch_, pitch_, integralPitch_, prevErrorPitch_, Kp_pitch_, Ki_pitch_, Kd_pitch_, false);
+    // Legacy path (unused). Rate control is implemented in calculateMotorOutputs().
+    return computePIDAxis(targetPitchRate_dps_, gyroY_deg_s_, integralPitch_, prevErrorPitch_, Kp_pitch_, Ki_pitch_, Kd_pitch_, false);
 }
 
 float computeYaw() {
-    return computePIDAxis(targetYaw_, yaw_, integralYaw_, prevErrorYaw_, Kp_yaw_, Ki_yaw_, Kd_yaw_, true, PIDConfig::MAX_YAW_PID_OUTPUT);
+    // Legacy path (unused). Yaw is rate-controlled (no yaw angle integration).
+    return computePIDAxis(targetYawRate_dps_, gyroZ_deg_s_, integralYaw_, prevErrorYaw_, Kp_yaw_, Ki_yaw_, Kd_yaw_, false, PIDConfig::MAX_YAW_PID_OUTPUT);
 }
 
 void writeAllMotors(int pulse) {
@@ -1177,6 +1358,13 @@ bool updateMPU6050(float effectiveDt) {
     gyroY_deg_s_ = gyroY * 180.0f / PI;
     gyroZ_deg_s_ = gyroZ * 180.0f / PI;
 
+    // ---- PATCH: continuous bias update + correction (while DISARMED & still) ----
+    updateGyroBiasIfStill(gyroX_deg_s_, gyroY_deg_s_, gyroZ_deg_s_, accelX, accelY, accelZ);
+
+    gyroX_deg_s_ -= gyroBiasX_deg_s_;
+    gyroY_deg_s_ -= gyroBiasY_deg_s_;
+    gyroZ_deg_s_ -= gyroBiasZ_deg_s_;
+
     // Calculate angles from accelerometer
     float accelRoll = atan2(accelY, accelZ) * 180.0f / PI;
     float accelPitch = atan2(-accelX, sqrt(accelY * accelY + accelZ * accelZ)) * 180.0f / PI;
@@ -1186,7 +1374,7 @@ bool updateMPU6050(float effectiveDt) {
             (1.0f - MPUConfig::COMPLEMENTARY_FILTER_ALPHA) * accelRoll;
     pitch_ = MPUConfig::COMPLEMENTARY_FILTER_ALPHA * (pitch_ + gyroY_deg_s_ * effectiveDt) +
                 (1.0f - MPUConfig::COMPLEMENTARY_FILTER_ALPHA) * accelPitch;
-    yaw_ += gyroZ_deg_s_ * effectiveDt;
+    // NOTE: yaw angle integration removed (yaw is rate-controlled only)
 
     return true;
 
@@ -1195,18 +1383,17 @@ bool updateMPU6050(float effectiveDt) {
 void printDebugInfo() {
         char text[256];
         snprintf(text, sizeof(text),
-        "Roll: %.1f Pitch: %.1f Yaw: %.1f | Throt: %d | Motors: %d/%d/%d/%d us | dt(ms): %.2f | Kp: %.2f/%.2f/%.2f | Ki: %.2f/%.2f/%.2f | Kd: %.3f/%.3f/%.3f | Corrections: %.3f/%.3f | %.3f/%.3f | %.3f/%.3f",
-        roll_, pitch_, yaw_,
+        "Roll: %.1f Pitch: %.1f | Throt: %d | Motors: %d/%d/%d/%d us | dt(ms): %.2f | Trim(R/P): %.2f/%.2f | GyBias(dps): %.2f/%.2f/%.2f | RatesSP(R/P/Y): %.1f/%.1f/%.1f | Kp: %.2f/%.2f/%.2f | Ki: %.2f/%.2f/%.2f | Kd: %.3f/%.3f/%.3f",
+        roll_, pitch_,
         baseThrottle,
         currentPulseFL_, currentPulseFR_, currentPulseBL_, currentPulseBR_,
         dt_ * 1000.0,
-        // targetRoll_, targetPitch_, targetYaw_,
+        rollTrimDeg_, pitchTrimDeg_,
+        gyroBiasX_deg_s_, gyroBiasY_deg_s_, gyroBiasZ_deg_s_,
+        targetRollRate_dps_, targetPitchRate_dps_, targetYawRate_dps_,
         Kp_roll_, Kp_pitch_, Kp_yaw_,
         Ki_roll_, Ki_pitch_, Ki_yaw_,
-        Kd_roll_, Kd_pitch_, Kd_yaw_,
-        integralRoll_, prevErrorRoll_,
-        integralPitch_, prevErrorPitch_,
-        integralYaw_, prevErrorYaw_
+        Kd_roll_, Kd_pitch_, Kd_yaw_
         );
 
     Serial.println(text);
